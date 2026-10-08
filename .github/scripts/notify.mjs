@@ -2,6 +2,9 @@ import webpush from 'web-push';
 
 const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, PUSH_SUBSCRIPTION, SCHEDULE } = process.env;
 
+// Prüft auch gleich, ob die Schlüssel gültig sind
+webpush.setVapidDetails('mailto:lockin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
 if (!PUSH_SUBSCRIPTION) {
   console.log('Noch kein Handy verbunden (Secret PUSH_SUBSCRIPTION fehlt).');
   process.exit(0);
@@ -17,8 +20,6 @@ if (SCHEDULE) {
     process.exit(0);
   }
 }
-
-webpush.setVapidDetails('mailto:lockin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 const payload = JSON.stringify({
   title: 'LockIn · Check-in',
