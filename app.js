@@ -7,6 +7,8 @@
    ========================================================= */
 
 const KEY = 'lockin.v1';
+// Öffentlicher Push-Schlüssel (der private liegt als Secret im GitHub-Repo)
+const VAPID_PUBLIC = '';
 
 // ---------- Helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -241,6 +243,14 @@ function parseNutrition(text) {
 // ---------- UI-State ----------
 const ui = { tab: 'heute', date: todayISO() };
 try { const t = sessionStorage.getItem('lockin.tab'); if (t) ui.tab = t; } catch { /* egal */ }
+// Aus der Benachrichtigung geöffnet: ?tab=checkin
+{
+  const t = new URLSearchParams(location.search).get('tab');
+  if (['heute', 'essen', 'checkin', 'verlauf', 'plan'].includes(t)) {
+    ui.tab = t;
+    history.replaceState(null, '', location.pathname);
+  }
+}
 
 const topEl = $('#top'), view = $('#view'), modal = $('#modal');
 
@@ -300,23 +310,97 @@ function bar(m, ist, soll) {
   </div>`;
 }
 
-function barsHTML() {
+function barsHTML(keys) {
   const t = targetsFor(ui.date), s = totals(ui.date);
-  return METRICS.map(m => bar(m, s[m.k], t[m.k])).join('');
+  return METRICS.filter(m => keys.includes(m.k)).map(m => bar(m, s[m.k], t[m.k])).join('');
+}
+
+const pctClass = (ist, soll) => !soll || ist == null ? 'low' : ist / soll < 0.9 ? 'low' : ist / soll <= 1.1 ? 'ok' : 'over';
+
+// Letzte Abwaage vor einem Datum (für die Veränderung)
+function prevWeight(date) {
+  const prev = Object.keys(db.days).filter(x => x < date && db.days[x].weight != null).sort().at(-1);
+  return prev ? db.days[prev].weight : null;
+}
+
+const ratingsDone = date => Object.keys(db.days[date]?.ratings || {}).length > 0;
+
+// Bereiche der Home-Seite, die sich bei Eingaben live aktualisieren
+const LIVE = {
+  hero() {
+    const d = day(), s = totals(ui.date), t = targetsFor(ui.date);
+    const pct = t.kcal ? s.kcal / t.kcal : 0;
+    const R = 52, C = 2 * Math.PI * R;
+    const rest = t.kcal - s.kcal;
+    const pw = prevWeight(ui.date);
+    const delta = d.weight != null && pw != null ? d.weight - pw : null;
+    const supps = db.settings.supplements;
+    const done = ratingsDone(ui.date);
+    const tile = (val, lbl, cls = '') => `<div class="tile ${cls}"><b>${val}</b><small>${lbl}</small></div>`;
+    return `
+      <div class="hero">
+        <svg class="ring" viewBox="0 0 128 128">
+          <circle cx="64" cy="64" r="${R}" class="ring-bg"/>
+          <circle cx="64" cy="64" r="${R}" transform="rotate(-90 64 64)" class="ring-fg ${pctClass(s.kcal, t.kcal)}"
+            stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - Math.min(1, pct))}"/>
+          <text x="64" y="64" text-anchor="middle" class="ring-num">${fmt(pct * 100)}%</text>
+          <text x="64" y="82" text-anchor="middle" class="ring-lbl">vom Ziel</text>
+        </svg>
+        <div class="hero-txt">
+          <small>Kalorien</small>
+          <div class="hero-big">${fmt(s.kcal)}</div>
+          <div class="hero-sub">/ ${fmt(t.kcal)} kcal</div>
+          <div class="hero-rest ${rest < 0 ? 'over' : ''}">${rest >= 0 ? `noch ${fmt(rest)} kcal` : `${fmt(-rest)} kcal drüber`}</div>
+        </div>
+      </div>
+      <div class="tiles">
+        ${tile(d.weight != null ? fmt(d.weight, 1) : '–', delta != null ? `kg · ${delta > 0 ? '+' : ''}${fmt(delta, 1)}` : 'kg')}
+        ${tile(fmt(sum(d.workouts, w => w.min)), 'min Training')}
+        ${tile(`${supps.filter(x => d.supps[x]).length}/${supps.length}`, 'Supps')}
+        ${tile(done ? '✓' : '–', 'Look', done ? 'done' : '')}
+      </div>`;
+  },
+  macros: () => barsHTML(['protein', 'carbs', 'fat', 'fiber', 'potassium']),
+  water() {
+    const s = totals(ui.date), t = targetsFor(ui.date);
+    return bar({ label: 'Wasser', unit: 'L', scale: 1 / 1000, dec: 2 }, s.water, t.water).replace('class="bar"', 'class="bar big"');
+  },
+  salt() {
+    const s = totals(ui.date), t = targetsFor(ui.date);
+    return bar(METRICS.find(m => m.k === 'salt'), s.salt, t.salt).replace('class="bar"', 'class="bar big"');
+  },
+  weight() {
+    const d = day(), pw = prevWeight(ui.date);
+    if (d.weight == null) return 'Noch nicht gewogen.';
+    if (pw == null) return 'Erste Abwaage – ab der nächsten siehst du die Veränderung.';
+    const delta = d.weight - pw;
+    return `${delta > 0 ? '+' : ''}${fmt(delta, 1)} kg zur letzten Abwaage (${fmt(pw, 1)} kg)`;
+  },
+  activity: () => barsHTML(['steps', 'sleep']),
+};
+
+function refreshLive() {
+  document.querySelectorAll('[data-live]').forEach(el => { el.innerHTML = LIVE[el.dataset.live](); });
 }
 
 const VIEWS = {
   heute() {
-    const d = day(), s = totals(ui.date), t = targetsFor(ui.date);
-    const extraSalt = sum(d.salt, x => x.g);
+    const d = day();
     const note = db.plans[ui.date]?.note;
+    const remind = ui.date === todayISO() && new Date().getHours() >= 18 && !ratingsDone(ui.date);
     return `
+      ${remind ? `<section class="card banner" data-act="goCheckin">
+        <div><b>Look & Gefühl eintragen</b><small>Für heute fehlt noch dein Check-in.</small></div><span>›</span>
+      </section>` : ''}
       ${note ? `<section class="card"><h2>Plan für heute</h2><div>${esc(note).replace(/\n/g, '<br>')}</div></section>` : ''}
-      <section class="card"><h2>Tagesziele</h2><div id="bars">${barsHTML()}</div></section>
+
+      <section class="card" data-live="hero">${LIVE.hero()}</section>
+
+      <section class="card"><h2>Nährwerte</h2><div data-live="macros">${LIVE.macros()}</div></section>
 
       <section class="card">
-        <h2>Wasser <span class="h-right">${fmt(s.water / 1000, 2)} / ${fmt(t.water / 1000, 1)} L</span></h2>
-        <div class="btnrow">
+        <div data-live="water">${LIVE.water()}</div>
+        <div class="btnrow" style="margin-top:12px">
           <button data-act="water" data-v="250">+250 ml</button>
           <button data-act="water" data-v="500">+500 ml</button>
           <button data-act="water" data-v="1000">+1 L</button>
@@ -326,21 +410,32 @@ const VIEWS = {
       </section>
 
       <section class="card">
-        <h2>Salz extra <span class="h-right">${fmt(extraSalt, 1)} g</span></h2>
-        <div class="btnrow">
+        <div data-live="salt">${LIVE.salt()}</div>
+        <div class="btnrow" style="margin-top:12px">
           <button data-act="salt" data-v="0.5">+0,5 g</button>
           <button data-act="salt" data-v="1">+1 g</button>
           <button data-act="salt" data-v="2">+2 g</button>
           <button class="ghost" data-act="undoSalt" aria-label="Rückgängig">↶</button>
         </div>
-        <p class="hint">Salz aus dem Essen wird automatisch mitgezählt. Gesamt: ${fmt(s.salt, 1)} g ≈ ${fmt(s.salt * 400)} mg Natrium.</p>
+        <p class="hint">Extra-Salz heute: ${fmt(sum(d.salt, x => x.g), 1)} g. Salz aus dem Essen wird automatisch mitgezählt.</p>
       </section>
 
       <section class="card">
-        <h2>Schritte & Schlaf</h2>
-        <div class="grid3">
+        <h2>Abwaage</h2>
+        <div class="seg" style="margin-bottom:10px">
+          <button class="${d.fasted === true ? 'on' : ''}" data-act="fasted" data-v="1">Nüchtern</button>
+          <button class="${d.fasted === false ? 'on warn' : ''}" data-act="fasted" data-v="0">Nicht nüchtern</button>
+        </div>
+        <label class="field"><span>Gewicht (kg)</span><input inputmode="decimal" data-day="weight" value="${d.weight != null ? fmt(d.weight, 2) : ''}" placeholder="0,0"></label>
+        <p class="hint" data-live="weight">${LIVE.weight()}</p>
+      </section>
+
+      <section class="card">
+        <h2>Aktivität & Schlaf</h2>
+        <div data-live="activity">${LIVE.activity()}</div>
+        <div class="grid3" style="margin-top:10px">
           <label class="field"><span>Schritte</span><input inputmode="numeric" data-day="steps" value="${d.steps ?? ''}" placeholder="0"></label>
-          <label class="field"><span>Schlaf (h)</span><input inputmode="decimal" data-day="sleep" value="${d.sleep ?? ''}" placeholder="0"></label>
+          <label class="field"><span>Schlaf (h)</span><input inputmode="decimal" data-day="sleep" value="${d.sleep != null ? fmt(d.sleep, 2) : ''}" placeholder="0"></label>
           <label class="field"><span>Qualität 1–10</span><input inputmode="numeric" data-day="sleepQ" value="${d.sleepQ ?? ''}" placeholder="–"></label>
         </div>
       </section>
@@ -406,19 +501,6 @@ const VIEWS = {
   checkin() {
     const d = day();
     return `
-      <section class="card">
-        <h2>Morgens</h2>
-        <div class="seg" style="margin-bottom:10px">
-          <button class="${d.fasted === true ? 'on' : ''}" data-act="fasted" data-v="1">Nüchtern gewogen</button>
-          <button class="${d.fasted === false ? 'on warn' : ''}" data-act="fasted" data-v="0">Nicht nüchtern</button>
-        </div>
-        <div class="grid3">
-          <label class="field"><span>Gewicht (kg)</span><input inputmode="decimal" data-day="weight" value="${d.weight ?? ''}" placeholder="0,0"></label>
-          <label class="field"><span>Taille (cm)</span><input inputmode="decimal" data-day="waist" value="${d.waist ?? ''}" placeholder="0"></label>
-          <label class="field"><span>Ruhepuls</span><input inputmode="numeric" data-day="rhr" value="${d.rhr ?? ''}" placeholder="0"></label>
-        </div>
-      </section>
-
       <section class="card">
         <h2>Look & Gefühl (1–10)</h2>
         ${RATINGS.map(r => {
@@ -541,6 +623,21 @@ const VIEWS = {
         <h2>Supplements</h2>
         <textarea class="full" id="suppList" placeholder="Eins pro Zeile">${esc(st.supplements.join('\n'))}</textarea>
         <button class="btn block" data-act="saveSupps">Speichern</button>
+      </section>
+
+      <section class="card">
+        <h2>Erinnerung 18 Uhr</h2>
+        ${st.pushSub ? `
+          <p class="hint" style="margin-top:0">Auf diesem Handy aktiviert. Du bekommst täglich um 18 Uhr eine Erinnerung für Look & Gefühl.</p>
+          <div class="btnrow" style="margin-top:10px">
+            <button data-act="testPush">Test</button>
+            <button data-act="copyPush">Code kopieren</button>
+          </div>
+          <p class="hint">Der Code muss einmalig als Secret <b>PUSH_SUBSCRIPTION</b> im GitHub-Repo hinterlegt sein.</p>`
+        : `
+          <p class="hint" style="margin-top:0">Täglich um 18 Uhr eine Push-Nachricht, damit du Look & Gefühl nicht vergisst.</p>
+          <button class="btn primary block" data-act="enablePush">Benachrichtigungen aktivieren</button>
+          <p class="hint">Funktioniert nur, wenn LockIn vom Home-Bildschirm aus geöffnet ist (iOS 16.4 oder neuer).</p>`}
       </section>
 
       <section class="card">
@@ -762,6 +859,7 @@ const ACT = {
     await photos.del(el.dataset.id); AFTER.checkin();
   },
 
+  goCheckin() { switchTab('checkin'); },
   openDay(el) { ui.date = el.dataset.date; switchTab('heute'); },
 
   editPlan(el) { planModal(el.dataset.date); },
@@ -776,6 +874,35 @@ const ACT = {
   saveSupps() {
     db.settings.supplements = $('#suppList').value.split('\n').map(s => s.trim()).filter(Boolean);
     save(); toast('Supplements gespeichert');
+  },
+
+  async enablePush() {
+    const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      toast(standalone ? 'Push wird hier nicht unterstützt – iOS aktualisieren?' : 'Erst über Teilen → „Zum Home-Bildschirm“ installieren und dort öffnen');
+      return;
+    }
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { toast('Benachrichtigungen wurden nicht erlaubt'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const key = Uint8Array.from(atob(VAPID_PUBLIC.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+      const sub = await reg.pushManager.getSubscription()
+        || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      db.settings.pushSub = JSON.stringify(sub);
+      save(); render();
+      toast('Aktiviert – jetzt „Code kopieren“');
+    } catch (err) { toast('Fehler: ' + err.message); }
+  },
+  async copyPush() {
+    try { await navigator.clipboard.writeText(db.settings.pushSub); toast('Code kopiert'); }
+    catch { pasteModal(db.settings.pushSub, 'Kopieren hat nicht geklappt – Text markieren und kopieren.'); }
+  },
+  async testPush() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification('LockIn · Check-in', { body: 'So sieht deine 18-Uhr-Erinnerung aus 💪', icon: 'icons/icon-192.png', tag: 'lockin-test', data: { url: './?tab=checkin' } });
+    } catch (err) { toast('Fehler: ' + err.message); }
   },
 
   async exportData() {
@@ -837,8 +964,7 @@ document.addEventListener('change', async e => {
     const d = day();
     d[el.dataset.day] = 'text' in el.dataset ? el.value : num(el.value);
     save();
-    const bars = $('#bars');
-    if (bars) bars.innerHTML = barsHTML();
+    refreshLive();
     return;
   }
   if (el.dataset.daybool) { day()[el.dataset.daybool] = el.checked; save(); return; }
@@ -931,6 +1057,8 @@ ui.lastToday = todayISO();
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* offline-Modus nicht verfügbar */ });
+  // Klick auf Benachrichtigung, während die App schon offen ist
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data?.tab) switchTab(e.data.tab); });
 }
 
 // Persistenten Speicher anfragen, damit iOS die Daten nicht wegräumt

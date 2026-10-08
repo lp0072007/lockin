@@ -265,3 +265,41 @@ td.over { color: var(--warn); }
   .grid3 { grid-template-columns: 1fr 1fr; }
   .summary b { font-size: 16px; }
 }
+
+/* ---------- Home-Dashboard ---------- */
+.hero { display: flex; align-items: center; gap: 16px; }
+.ring { width: 128px; height: 128px; flex: 0 0 auto; }
+.ring-bg { fill: none; stroke: var(--card-2); stroke-width: 12; }
+.ring-fg { fill: none; stroke: #5b6170; stroke-width: 12; stroke-linecap: round; transition: stroke-dashoffset .4s; }
+.ring-fg.ok { stroke: var(--accent); }
+.ring-fg.over { stroke: var(--warn); }
+.ring-num { fill: var(--text); font-size: 24px; font-weight: 800; }
+.ring-lbl { fill: var(--muted); font-size: 11px; }
+.hero-txt small { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.hero-big { font-size: 38px; font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.hero-sub { color: var(--muted); font-size: 14px; }
+.hero-rest { margin-top: 6px; font-size: 13px; font-weight: 700; color: var(--accent); }
+.hero-rest.over { color: var(--warn); }
+
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 14px; }
+.tile { background: var(--card-2); border-radius: 12px; padding: 8px 4px; text-align: center; min-width: 0; }
+.tile b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+.tile small { display: block; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile.done b { color: var(--accent); }
+
+.bar.big { margin: 0; }
+.bar.big .bar-head { font-size: 16px; }
+.bar.big .bar-track { height: 14px; }
+
+.banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink);
+}
+.banner b { display: block; }
+.banner small { font-size: 13px; opacity: .75; }
+.banner span { font-size: 24px; font-weight: 800; }
+
+@media (max-width: 360px) {
+  .ring { width: 108px; height: 108px; }
+  .hero-big { font-size: 32px; }
+}
