@@ -86,7 +86,7 @@ const WORKOUT_TYPES = ['Krafttraining', 'Cardio', 'Posing', 'Pump-Workout', 'Mob
 
 const DEFAULTS = {
   targets: { kcal: 2800, protein: 200, carbs: 300, fat: 70, fiber: 30, water: 4000, salt: 6, potassium: 4000, steps: 10000, sleep: 8 },
-  supplements: ['Kreatin', 'Multivitamin', 'Omega-3', 'Vitamin D', 'Elektrolyte'],
+  supplements: ['Kreatin', 'Omega-3', 'Elektrolyte'],
   showDate: '',
   prepStart: '',
 };
@@ -100,6 +100,10 @@ function load() {
   if (!d || typeof d !== 'object') d = {};
   d.settings = { ...clone(DEFAULTS), ...(d.settings || {}) };
   d.settings.targets = { ...DEFAULTS.targets, ...(d.settings.targets || {}) };
+  // Alte, unveränderte Standard-Liste auf die neue umstellen
+  if (d.settings.supplements.join('|') === 'Kreatin|Multivitamin|Omega-3|Vitamin D|Elektrolyte') {
+    d.settings.supplements = [...DEFAULTS.supplements];
+  }
   d.plans ||= {};
   d.days ||= {};
   d.recipes ||= [];
