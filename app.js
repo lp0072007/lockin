@@ -611,6 +611,7 @@ const VIEWS = {
           </div>`;
         }).join('')}</div>
         <p class="hint">Für jeden Tag eigene Ziele (z. B. Carb-Load, Wasser runter). Leere Felder nutzen die Standard-Ziele.</p>
+        <button class="btn primary block" data-act="planImport">Plan von KI importieren</button>
       </section>
 
       <section class="card">
@@ -780,6 +781,89 @@ function recipesModal() {
     <button class="btn block" data-act="closeModal">Schließen</button>`);
 }
 
+// ---------- Plan-Import (z. B. von ChatGPT/Claude) ----------
+const PLAN_PROMPT = `Erstelle mir einen Peak-Week-Plan für meine App „LockIn“.
+Antworte NUR mit JSON in genau diesem Format, ohne Text davor oder danach.
+
+Regeln:
+- "date" im Format JJJJ-MM-TT. Alternativ statt "date": "tMinus" = Tage bis zur Show (0 = Showtag, 1 = Tag davor …)
+- Einheiten: kcal, protein/carbs/fat/fiber in g, water in ml, salt in g, potassium in mg, steps als Zahl, sleep in Stunden
+- Felder, die an einem Tag keine Vorgabe haben, einfach weglassen
+- "label": kurzer Name der Phase (z. B. "Depletion 1", "Carb-Load 2", "Showday")
+- "note": konkrete Anweisungen für den Tag (Mahlzeiten-Timing, Training, Cardio, Posing, Wasser-Timing …)
+
+Meine Daten:
+- Showdatum: ____
+- Prep-Start: ____
+- Aktuelles Gewicht: ____ kg
+- Aktuelle Makros: ____ kcal, ____ g Eiweiß, ____ g KH, ____ g Fett
+- Wasser aktuell: ____ L
+
+Format:
+{
+  "showDate": "2026-10-24",
+  "prepStart": "2026-10-12",
+  "days": [
+    {
+      "date": "2026-10-12",
+      "label": "Depletion 1",
+      "kcal": 2300, "protein": 230, "carbs": 80, "fat": 75, "fiber": 25,
+      "water": 6000, "salt": 6, "potassium": 4000, "steps": 12000, "sleep": 8,
+      "note": "Ganzkörper-Depletion-Training, 30 min Cardio, Posing 20 min"
+    },
+    {
+      "tMinus": 0,
+      "label": "Showday",
+      "carbs": 150, "water": 1000,
+      "note": "Kleine Mahlzeiten alle 2 h, vor der Bühne Pump-Up"
+    }
+  ]
+}`;
+
+const isIso = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+function parsePlan(text) {
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error('Kein JSON gefunden');
+  let j;
+  try { j = JSON.parse(text.slice(a, b + 1)); } catch { throw new Error('JSON ist fehlerhaft – nochmal komplett kopieren'); }
+  const showDate = isIso(j.showDate) ? j.showDate : null;
+  const days = Array.isArray(j.days) ? j.days : Array.isArray(j.tage) ? j.tage : null;
+  if (!days?.length) throw new Error('Keine Tage ("days") gefunden');
+  const plans = {};
+  for (const d of days) {
+    let date = d.date ?? d.datum;
+    const tm = d.tMinus ?? d.daysOut;
+    if (!isIso(date) && tm != null) {
+      const base = showDate || db.settings.showDate;
+      if (!base) throw new Error('Für "tMinus" braucht es ein "showDate"');
+      date = addDays(base, -Number(tm));
+    }
+    if (!isIso(date)) throw new Error(`Ungültiges Datum: ${date ?? '(fehlt)'}`);
+    const p = {};
+    if (d.label) p.label = String(d.label).trim();
+    if (d.note) p.note = (Array.isArray(d.note) ? d.note.join('\n') : String(d.note)).trim();
+    for (const f of TARGET_FIELDS) { const v = num(d[f.k]); if (v != null) p[f.k] = v; }
+    if (p.water != null && p.water < 20) p.water = Math.round(p.water * 1000); // Liter → ml
+    if (p.salt != null && p.salt > 100) p.salt = p.salt / 1000; // mg → g
+    plans[date] = p;
+  }
+  const dates = Object.keys(plans).sort();
+  return { plans, dates, showDate, prepStart: isIso(j.prepStart) ? j.prepStart : dates[0] };
+}
+
+function planImportModal(text = '', msg = '') {
+  openModal(`
+    <h3>Plan von KI importieren</h3>
+    <div class="note ${msg ? '' : 'good'}">${msg || '1. „Vorlage kopieren“ und an die KI schicken, deine Daten ausfüllen.<br>2. Antwort der KI komplett kopieren.<br>3. Hier einfügen und importieren.'}</div>
+    <button type="button" class="btn block" style="margin:0 0 10px" data-act="copyPlanPrompt">Vorlage für die KI kopieren</button>
+    <textarea class="full" id="planJson" placeholder="Antwort der KI hier einfügen…" style="min-height:180px">${esc(text)}</textarea>
+    <div class="btnrow" style="margin-top:12px">
+      <button type="button" data-act="closeModal">Abbrechen</button>
+      <button type="button" class="primary" data-act="doPlanImport">Importieren</button>
+    </div>`);
+}
+
 function planModal(date) {
   const p = db.plans[date] || {}, t = db.settings.targets;
   openModal(`
@@ -863,6 +947,28 @@ const ACT = {
   openDay(el) { ui.date = el.dataset.date; switchTab('heute'); },
 
   editPlan(el) { planModal(el.dataset.date); },
+  async planImport() {
+    let text = '';
+    try { text = await navigator.clipboard.readText(); } catch { /* keine Berechtigung */ }
+    planImportModal(text.includes('{') ? text : '');
+  },
+  async copyPlanPrompt() {
+    try { await navigator.clipboard.writeText(PLAN_PROMPT); toast('Vorlage kopiert – jetzt in der KI einfügen'); }
+    catch { planImportModal(PLAN_PROMPT, 'Kopieren hat nicht geklappt – Text markieren und kopieren.'); }
+  },
+  doPlanImport() {
+    const text = $('#planJson').value;
+    let r;
+    try { r = parsePlan(text); } catch (err) { planImportModal(text, '⚠️ ' + esc(err.message)); return; }
+    const existing = r.dates.filter(x => db.plans[x]).length;
+    if (!confirm(`${r.dates.length} Tage importieren (${dateLabel(r.dates[0])} – ${dateLabel(r.dates.at(-1))})?`
+      + (existing ? `\n${existing} vorhandene Tagespläne werden überschrieben.` : ''))) return;
+    Object.assign(db.plans, r.plans);
+    if (r.showDate) db.settings.showDate = r.showDate;
+    if (r.prepStart) db.settings.prepStart = r.prepStart;
+    save(); closeModal(); render();
+    toast(`${r.dates.length} Tage importiert`);
+  },
   copyPrevPlan(el) {
     const prev = db.plans[addDays(el.dataset.date, -1)];
     if (!prev) { toast('Vortag hat keinen Plan'); return; }
