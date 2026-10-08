@@ -87,8 +87,6 @@ const WORKOUT_TYPES = ['Krafttraining', 'Cardio', 'Posing', 'Pump-Workout', 'Mob
 const DEFAULTS = {
   targets: { kcal: 2800, protein: 200, carbs: 300, fat: 70, fiber: 30, water: 4000, salt: 6, potassium: 4000, steps: 10000, sleep: 8 },
   supplements: ['Kreatin', 'Multivitamin', 'Omega-3', 'Vitamin D', 'Elektrolyte'],
-  trainingBonus: 200,   // kcal extra an Trainingstagen (als KH)
-  trainingsPerWeek: 4,
   showDate: '',
   prepStart: '',
 };
@@ -122,28 +120,11 @@ function day(date = ui.date) {
   return d;
 }
 
-// Trainingstag: eigene Auswahl am Tag gewinnt, sonst Vorgabe aus dem Plan
-const isTrainingDay = date => db.days[date]?.trainingDay ?? db.plans[date]?.trainingDay ?? false;
-const trainingBonus = () => num(db.settings.trainingBonus) ?? 0;
-
 function targetsFor(date) {
   const t = { ...db.settings.targets };
   const p = db.plans[date] || {};
   for (const k of Object.keys(t)) if (p[k] != null && p[k] !== '') t[k] = p[k];
-  if (isTrainingDay(date) && trainingBonus()) {
-    t.kcal += trainingBonus();
-    t.carbs += Math.round(trainingBonus() / 4);
-  }
   return t;
-}
-
-// Trainingstage in der Woche (Mo–So) des Datums
-function trainingWeek(date) {
-  const wd = (new Date(date + 'T12:00:00').getDay() + 6) % 7;
-  const monday = addDays(date, -wd);
-  let n = 0;
-  for (let i = 0; i < 7; i++) if (isTrainingDay(addDays(monday, i))) n++;
-  return n;
 }
 
 const foodVal = (f, k) => (f.base?.[k] || 0) * (f.factor || 1);
@@ -300,7 +281,6 @@ function renderTop() {
     cd = n > 1 ? `Show in ${n} Tagen` : n === 1 ? 'Show morgen' : n === 0 ? 'Showday' : `${-n} Tage nach Show`;
   }
   const label = db.plans[ui.date]?.label;
-  const showSub = cd || label || isTrainingDay(ui.date) || ui.date !== todayISO();
   const isToday = ui.date === todayISO();
   topEl.innerHTML = `
     <div class="datenav">
@@ -310,10 +290,9 @@ function renderTop() {
       </label>
       <button data-act="nextDay" aria-label="Nächster Tag">›</button>
     </div>
-    ${showSub ? `<div class="sub">
+    ${cd || label || !isToday ? `<div class="sub">
       ${cd ? `<span class="pill accent">${cd}</span>` : ''}
       ${label ? `<span class="pill">${esc(label)}</span>` : ''}
-      ${isTrainingDay(ui.date) ? `<span class="pill train">Trainingstag +${fmt(trainingBonus())} kcal</span>` : ''}
       ${!isToday ? `<button class="pill" style="border:0" data-act="goToday">Zu heute</button>` : ''}
     </div>` : ''}`;
 }
@@ -492,13 +471,6 @@ const VIEWS = {
     const cell = (k, l) => `<div><b>${fmt(s[k])}</b><small>${l} / ${fmt(t[k])}</small></div>`;
     return `
       <section class="card">
-        <div class="seg" style="margin-bottom:8px">
-          <button class="${isTrainingDay(ui.date) ? 'on' : ''}" data-act="setTraining" data-v="1">Trainingstag</button>
-          <button class="${!isTrainingDay(ui.date) ? 'on rest' : ''}" data-act="setTraining" data-v="0">Ruhetag</button>
-        </div>
-        <p class="hint" style="margin:0 0 12px;text-align:center">${isTrainingDay(ui.date)
-          ? `+${fmt(trainingBonus())} kcal / +${fmt(trainingBonus() / 4)} g KH für Energie · `
-          : ''}Diese Woche: ${trainingWeek(ui.date)}/${fmt(db.settings.trainingsPerWeek)} Trainingstage</p>
         <div class="summary">${cell('kcal', 'kcal')}${cell('protein', 'EW')}${cell('carbs', 'KH')}${cell('fat', 'Fett')}</div>
         <p class="hint" style="text-align:center">Ballaststoffe ${fmt(s.fiber)} / ${fmt(t.fiber)} g · Salz ${fmt(s.salt, 1)} / ${fmt(t.salt, 1)} g</p>
       </section>
@@ -633,7 +605,7 @@ const VIEWS = {
           const sd = st.showDate ? diffDays(x, st.showDate) : null;
           return `<div class="item tap plan-day ${x === today ? 'today' : ''}" data-act="editPlan" data-date="${x}">
             <div class="main">
-              <div class="name">${dateLabel(x)}${sd != null && sd >= 0 ? ` <small style="color:var(--muted);display:inline">· ${sd === 0 ? 'SHOW' : 'T−' + sd}</small>` : ''}${p.label ? ' · ' + esc(p.label) : ''}${isTrainingDay(x) ? ' <span class="pill train" style="font-size:10px;padding:2px 7px">Training</span>' : ''}</div>
+              <div class="name">${dateLabel(x)}${sd != null && sd >= 0 ? ` <small style="color:var(--muted);display:inline">· ${sd === 0 ? 'SHOW' : 'T−' + sd}</small>` : ''}${p.label ? ' · ' + esc(p.label) : ''}</div>
               <small>${over.length ? over.map(f => `${f.label.split(' ')[0]} ${fmt(p[f.k], 1)}`).join(' · ') : 'Standard-Ziele'}</small>
             </div><span style="color:var(--muted)">›</span>
           </div>`;
@@ -646,15 +618,6 @@ const VIEWS = {
         <h2>Standard-Ziele</h2>
         <div class="grid2">${TARGET_FIELDS.map(f =>
           `<label class="field"><span>${f.label}</span><input inputmode="decimal" data-target="${f.k}" value="${t[f.k] ?? ''}"></label>`).join('')}</div>
-      </section>
-
-      <section class="card">
-        <h2>Training</h2>
-        <div class="grid2">
-          <label class="field"><span>Bonus Trainingstag (kcal)</span><input inputmode="numeric" data-settingnum="trainingBonus" value="${st.trainingBonus ?? ''}"></label>
-          <label class="field"><span>Trainings pro Woche</span><input inputmode="numeric" data-settingnum="trainingsPerWeek" value="${st.trainingsPerWeek ?? ''}"></label>
-        </div>
-        <p class="hint">Der Bonus kommt an Trainingstagen als Kohlenhydrate dazu (4 kcal = 1 g KH).</p>
       </section>
 
       <section class="card">
@@ -819,7 +782,7 @@ function recipesModal() {
 }
 
 // ---------- Plan-Import (z. B. von ChatGPT/Claude) ----------
-const PLAN_PROMPT = () => `Erstelle mir einen Peak-Week-Plan für meine App „LockIn“.
+const PLAN_PROMPT = `Erstelle mir einen Peak-Week-Plan für meine App „LockIn“.
 Antworte NUR mit JSON in genau diesem Format, ohne Text davor oder danach.
 
 Regeln:
@@ -828,8 +791,6 @@ Regeln:
 - Felder, die an einem Tag keine Vorgabe haben, einfach weglassen
 - "label": kurzer Name der Phase (z. B. "Depletion 1", "Carb-Load 2", "Showday")
 - "note": konkrete Anweisungen für den Tag (Mahlzeiten-Timing, Training, Cardio, Posing, Wasser-Timing …)
-- "trainingDay": true an Tagen mit Krafttraining. Ich trainiere ${db.settings.trainingsPerWeek}× pro Woche, verteil die Trainingstage sinnvoll.
-- An Trainingstagen esse ich ${db.settings.trainingBonus} kcal mehr (als KH) – das rechnet die App automatisch dazu. Gib kcal und carbs daher IMMER OHNE diesen Bonus an.
 
 Meine Daten:
 - Showdatum: ____
@@ -842,14 +803,12 @@ Format:
 {
   "showDate": "2026-10-24",
   "prepStart": "2026-10-12",
-  "trainingBonusKcal": ${db.settings.trainingBonus},
   "days": [
     {
       "date": "2026-10-12",
       "label": "Depletion 1",
       "kcal": 2300, "protein": 230, "carbs": 80, "fat": 75, "fiber": 25,
       "water": 6000, "salt": 6, "potassium": 4000, "steps": 12000, "sleep": 8,
-      "trainingDay": true,
       "note": "Ganzkörper-Depletion-Training, 30 min Cardio, Posing 20 min"
     },
     {
@@ -883,8 +842,6 @@ function parsePlan(text) {
     if (!isIso(date)) throw new Error(`Ungültiges Datum: ${date ?? '(fehlt)'}`);
     const p = {};
     if (d.label) p.label = String(d.label).trim();
-    const tr = d.trainingDay ?? d.training ?? d.trainingstag;
-    if (tr === true || tr === 1 || /^(true|ja|yes|1)$/i.test(String(tr ?? ''))) p.trainingDay = true;
     if (d.note) p.note = (Array.isArray(d.note) ? d.note.join('\n') : String(d.note)).trim();
     for (const f of TARGET_FIELDS) { const v = num(d[f.k]); if (v != null) p[f.k] = v; }
     if (p.water != null && p.water < 20) p.water = Math.round(p.water * 1000); // Liter → ml
@@ -892,8 +849,7 @@ function parsePlan(text) {
     plans[date] = p;
   }
   const dates = Object.keys(plans).sort();
-  const bonus = num(j.trainingBonusKcal);
-  return { plans, dates, showDate, prepStart: isIso(j.prepStart) ? j.prepStart : dates[0], bonus };
+  return { plans, dates, showDate, prepStart: isIso(j.prepStart) ? j.prepStart : dates[0] };
 }
 
 function planImportModal(text = '', msg = '') {
@@ -916,8 +872,6 @@ function planModal(date) {
       <input type="hidden" name="date" value="${date}">
       <div class="grid2">
         <label class="field wide"><span>Bezeichnung</span><input name="label" value="${esc(p.label || '')}" placeholder="z. B. Depletion, Carb-Load 1"></label>
-        <div class="row field wide"><span style="font-size:14px;color:var(--text)">Trainingstag (+${fmt(trainingBonus())} kcal)</span>
-          <label class="toggle"><input type="checkbox" name="trainingDay" ${p.trainingDay ? 'checked' : ''}><i></i></label></div>
         ${TARGET_FIELDS.map(f => `<label class="field"><span>${f.label}</span><input inputmode="decimal" name="${f.k}" value="${p[f.k] ?? ''}" placeholder="${fmt(t[f.k], 1)}"></label>`).join('')}
         <label class="field wide"><span>Anweisungen (z. B. vom Coach)</span><textarea name="note" class="full" placeholder="Was ist heute wichtig?">${esc(p.note || '')}</textarea></label>
       </div>
@@ -982,7 +936,6 @@ const ACT = {
   },
 
   bm(el) { const d = day(); d.bm = Math.max(0, (d.bm || 0) + +el.dataset.v); save(); render(); },
-  setTraining(el) { day().trainingDay = el.dataset.v === '1'; save(); render(); },
   fasted(el) { const d = day(), v = el.dataset.v === '1'; d.fasted = d.fasted === v ? null : v; save(); render(); },
   urine(el) { const d = day(), v = +el.dataset.v; d.urine = d.urine === v ? null : v; save(); render(); },
   async delPhoto(el) {
@@ -1000,8 +953,8 @@ const ACT = {
     planImportModal(text.includes('{') ? text : '');
   },
   async copyPlanPrompt() {
-    try { await navigator.clipboard.writeText(PLAN_PROMPT()); toast('Vorlage kopiert – jetzt in der KI einfügen'); }
-    catch { planImportModal(PLAN_PROMPT(), 'Kopieren hat nicht geklappt – Text markieren und kopieren.'); }
+    try { await navigator.clipboard.writeText(PLAN_PROMPT); toast('Vorlage kopiert – jetzt in der KI einfügen'); }
+    catch { planImportModal(PLAN_PROMPT, 'Kopieren hat nicht geklappt – Text markieren und kopieren.'); }
   },
   doPlanImport() {
     const text = $('#planJson').value;
@@ -1013,7 +966,6 @@ const ACT = {
     Object.assign(db.plans, r.plans);
     if (r.showDate) db.settings.showDate = r.showDate;
     if (r.prepStart) db.settings.prepStart = r.prepStart;
-    if (r.bonus != null) db.settings.trainingBonus = r.bonus;
     save(); closeModal(); render();
     toast(`${r.dates.length} Tage importiert`);
   },
@@ -1021,16 +973,10 @@ const ACT = {
     const prev = db.plans[addDays(el.dataset.date, -1)];
     if (!prev) { toast('Vortag hat keinen Plan'); return; }
     const form = $('form[data-form="plan"]');
-    for (const [k, v] of Object.entries(prev)) {
-      const f = form.elements[k];
-      if (!f) continue;
-      if (f.type === 'checkbox') f.checked = !!v; else f.value = v ?? '';
-    }
+    for (const [k, v] of Object.entries(prev)) if (form.elements[k]) form.elements[k].value = v ?? '';
     toast('Vom Vortag übernommen');
   },
-  clearPlan() {
-    $('form[data-form="plan"]').querySelectorAll('input:not([type=hidden]), textarea').forEach(i => { if (i.type === 'checkbox') i.checked = false; else i.value = ''; });
-  },
+  clearPlan() { $('form[data-form="plan"]').querySelectorAll('input:not([type=hidden]), textarea').forEach(i => { i.value = ''; }); },
   saveSupps() {
     db.settings.supplements = $('#suppList').value.split('\n').map(s => s.trim()).filter(Boolean);
     save(); toast('Supplements gespeichert');
@@ -1136,7 +1082,6 @@ document.addEventListener('change', async e => {
     if (v != null) db.settings.targets[el.dataset.target] = v;
     save(); return;
   }
-  if (el.dataset.settingnum) { db.settings[el.dataset.settingnum] = num(el.value) ?? 0; save(); return; }
   if (el.dataset.setting) { db.settings[el.dataset.setting] = el.value; save(); render(); return; }
 
   if (el.id === 'cmpA' || el.id === 'cmpB') { ui[el.id] = el.value; AFTER.verlauf(); return; }
@@ -1202,9 +1147,8 @@ document.addEventListener('submit', e => {
   if (form.dataset.form === 'plan') {
     const date = fd.get('date');
     const p = { label: String(fd.get('label') || '').trim(), note: String(fd.get('note') || '').trim() };
-    if (fd.get('trainingDay')) p.trainingDay = true;
     for (const f of TARGET_FIELDS) { const v = num(fd.get(f.k)); if (v != null) p[f.k] = v; }
-    const empty = !p.label && !p.note && !p.trainingDay && TARGET_FIELDS.every(f => p[f.k] == null);
+    const empty = !p.label && !p.note && TARGET_FIELDS.every(f => p[f.k] == null);
     if (empty) delete db.plans[date]; else db.plans[date] = p;
     save(); closeModal(); render(); toast('Plan gespeichert');
   }
