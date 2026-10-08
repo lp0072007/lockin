@@ -303,3 +303,7 @@ td.over { color: var(--warn); }
   .ring { width: 108px; height: 108px; }
   .hero-big { font-size: 32px; }
 }
+
+/* ---------- Trainingstag ---------- */
+.pill.train { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.seg button.on.rest { background: var(--line); color: var(--text); }
