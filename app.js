@@ -8,7 +8,7 @@
 
 const KEY = 'lockin.v1';
 // Öffentlicher Push-Schlüssel (der private liegt als Secret im GitHub-Repo)
-const VAPID_PUBLIC = '';
+const VAPID_PUBLIC = 'BA3AhicVHF01V7yOJifku0ZUJeAd_jKqmHVefyppEU5-1CVzfbkvhKy5VBwHFMipGBnf3PprFHnjFMvA4gRPZVE';
 
 // ---------- Helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -886,7 +886,9 @@ const ACT = {
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') { toast('Benachrichtigungen wurden nicht erlaubt'); return; }
       const reg = await navigator.serviceWorker.ready;
-      const key = Uint8Array.from(atob(VAPID_PUBLIC.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+      const b64 = VAPID_PUBLIC.replace(/-/g, '+').replace(/_/g, '/');
+      const key = Uint8Array.from(atob(b64 + '='.repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0));
+      if (key.length !== 65) throw new Error('Push-Schlüssel ungültig');
       const sub = await reg.pushManager.getSubscription()
         || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
       db.settings.pushSub = JSON.stringify(sub);
