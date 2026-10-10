@@ -390,13 +390,12 @@ function refreshLive() {
 const VIEWS = {
   heute() {
     const d = day();
-    const note = db.plans[ui.date]?.note;
     const remind = ui.date === todayISO() && new Date().getHours() >= 18 && !ratingsDone(ui.date);
     return `
       ${remind ? `<section class="card banner" data-act="goCheckin">
         <div><b>Look & Gefühl eintragen</b><small>Für heute fehlt noch dein Check-in.</small></div><span>›</span>
       </section>` : ''}
-      ${note ? `<section class="card"><h2>Plan für heute</h2><div>${esc(note).replace(/\n/g, '<br>')}</div></section>` : ''}
+      ${planCardHTML()}
 
       <section class="card" data-live="hero">${LIVE.hero()}</section>
 
@@ -421,7 +420,7 @@ const VIEWS = {
           <button data-act="salt" data-v="2">+2 g</button>
           <button class="ghost" data-act="undoSalt" aria-label="Rückgängig">↶</button>
         </div>
-        <p class="hint">Extra-Salz heute: ${fmt(sum(d.salt, x => x.g), 1)} g. Salz aus dem Essen wird automatisch mitgezählt.</p>
+        <p class="hint">Extra-Salz heute: ${fmt(sum(d.salt, x => x.g), 1)} g${db.plans[ui.date]?.saltAdded != null ? ` von ${fmt(db.plans[ui.date].saltAdded, 1)} g laut Plan` : ''}. Salz aus dem Essen wird automatisch mitgezählt.</p>
       </section>
 
       <section class="card">
@@ -487,6 +486,8 @@ const VIEWS = {
         </div>
         <p class="hint">Yazio: Rezept öffnen → Teilen → Kopieren, dann hier auf „Einfügen“ tippen.</p>
       </section>
+
+      ${plannedMealsHTML()}
 
       <section class="card">
         <h2>Mahlzeiten <span class="h-right">${foods.length}</span></h2>
@@ -610,7 +611,7 @@ const VIEWS = {
           return `<div class="item tap plan-day ${x === today ? 'today' : ''}" data-act="editPlan" data-date="${x}">
             <div class="main">
               <div class="name">${dateLabel(x)}${sd != null && sd >= 0 ? ` <small style="color:var(--muted);display:inline">· ${sd === 0 ? 'SHOW' : 'T−' + sd}</small>` : ''}${p.label ? ' · ' + esc(p.label) : ''}</div>
-              <small>${over.length ? over.map(f => `${f.label.split(' ')[0]} ${fmt(p[f.k], 1)}`).join(' · ') : 'Standard-Ziele'}</small>
+              <small>${over.length ? over.map(f => `${f.label.split(' ')[0]} ${fmt(p[f.k], 1)}`).join(' · ') : 'Standard-Ziele'}${p.meals?.length ? ` · ${p.meals.length} Mahlzeiten` : ''}</small>
             </div><span style="color:var(--muted)">›</span>
           </div>`;
         }).join('')}</div>
@@ -786,86 +787,220 @@ function recipesModal() {
 }
 
 // ---------- Plan-Import (z. B. von ChatGPT/Claude) ----------
-const PLAN_PROMPT = `Erstelle mir einen Peak-Week-Plan für meine App „LockIn“.
-Antworte NUR mit JSON in genau diesem Format, ohne Text davor oder danach.
+const PLAN_PROMPT = `Erstelle mir einen individuellen Prep- und Peak-Week-Plan für meine App „LockIn“.
+Erkläre gern deine Überlegungen – am Ende brauche ich aber den kompletten Plan als JSON in genau dem Format unten, in einem Codeblock (oder als Datei peak_week_plan.json).
 
-Regeln:
-- "date" im Format JJJJ-MM-TT. Alternativ statt "date": "tMinus" = Tage bis zur Show (0 = Showtag, 1 = Tag davor …)
-- Einheiten: kcal, protein/carbs/fat/fiber in g, water in ml, salt in g, potassium in mg, steps als Zahl, sleep in Stunden
-- Felder, die an einem Tag keine Vorgabe haben, einfach weglassen
-- "label": kurzer Name der Phase (z. B. "Depletion 1", "Carb-Load 2", "Showday")
-- "note": konkrete Anweisungen für den Tag (Mahlzeiten-Timing, Training, Cardio, Posing, Wasser-Timing …)
+Regeln für das JSON:
+- Ein Eintrag pro Tag in "days", "date" im Format JJJJ-MM-TT, lückenlos vom Prep-Start bis zum Showtag
+- Die Einheit steht im Feldnamen: waterLiters (Liter), saltGrams (g Salz gesamt inkl. Lebensmittel), saltAddedGrams (g Salz, das ich selbst zugebe), potassiumMg (mg), sleepHours (Stunden). kcal in kcal, protein/carbs/fat/fiber in Gramm
+- kcal und Makros eines Tages = Summe aller Mahlzeiten dieses Tages
+- "meals": alle Mahlzeiten des Tages in Reihenfolge, der Name beginnt mit der Uhrzeit (z. B. "07:00 Frühstück – Overnight Oats"), Zutaten mit Gramm, Nährwerte pro Mahlzeit
+- "training", "cardio", "posingMinutes", "note": konkrete Anweisungen für den Tag
+- "adjustmentRules": Wenn-dann-Regeln für den Morgen-Check (z. B. "IF flach + hart: +50 g KH zum Frühstück")
+- Felder ohne Vorgabe weglassen, keine Kommentare im JSON
+- Gesundheit geht vor: keine Diuretika, kein Wasser-Cut, kein Salz-Entzug
 
 Meine Daten:
-- Showdatum: ____
+- Showdatum und Uhrzeit Bühne: ____
 - Prep-Start: ____
-- Aktuelles Gewicht: ____ kg
+- Körpergewicht: ____ kg · Geschlecht: ____ · Natural / Enhanced: ____
 - Aktuelle Makros: ____ kcal, ____ g Eiweiß, ____ g KH, ____ g Fett
-- Wasser aktuell: ____ L
+- Trainingstage: ____ (z. B. So/Mo/Mi/Do)
+- Lebensmittel, die ich mag / nicht vertrage: ____
+- Meal Prep: höchstens ____× pro Woche kochen
 
 Format:
 {
   "showDate": "2026-10-24",
-  "prepStart": "2026-10-12",
+  "prepStart": "2026-10-11",
   "days": [
     {
-      "date": "2026-10-12",
-      "label": "Depletion 1",
-      "kcal": 2300, "protein": 230, "carbs": 80, "fat": 75, "fiber": 25,
-      "water": 6000, "salt": 6, "potassium": 4000, "steps": 12000, "sleep": 8,
-      "note": "Ganzkörper-Depletion-Training, 30 min Cardio, Posing 20 min"
-    },
-    {
-      "tMinus": 0,
-      "label": "Showday",
-      "carbs": 150, "water": 1000,
-      "note": "Kleine Mahlzeiten alle 2 h, vor der Bühne Pump-Up"
+      "date": "2026-10-11",
+      "label": "Prep W1",
+      "kcal": 1850, "protein": 143, "carbs": 226, "fat": 36, "fiber": 36,
+      "waterLiters": 4.0, "saltGrams": 6.0, "saltAddedGrams": 5.0, "potassiumMg": 4490,
+      "steps": 10000, "sleepHours": 8,
+      "training": "Unterkörper A: Kniebeuge 3×6–10 (RIR 2), Beinpresse 3×10–12 …",
+      "cardio": "15 min LISS nach dem Training",
+      "posingMinutes": 20,
+      "note": "Abends Overnight-Oats für morgen anrühren.",
+      "meals": [
+        {
+          "name": "07:00 Frühstück – Protein-Overnight-Oats",
+          "items": [{ "food": "Haferflocken", "grams": 50 }, { "food": "Skyr natur", "grams": 250 }],
+          "kcal": 504, "protein": 50.3, "carbs": 49.0, "fat": 9.6, "fiber": 10.7
+        }
+      ],
+      "adjustmentRules": [
+        "IF stark aufgebläht: Brokkoli gegen Zucchini tauschen",
+        "IF sehr flach + müde: Pre-Workout +20 g KH"
+      ]
     }
   ]
 }`;
 
 const isIso = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+// Zusätzliche Plan-Felder aus dem Import (bleiben beim Bearbeiten im Plan-Editor erhalten)
+const PLAN_EXTRAS = ['meals', 'training', 'cardio', 'posing', 'rules', 'saltAdded', 'sleepWindow'];
 
-function parsePlan(text) {
-  const a = text.indexOf('{'), b = text.lastIndexOf('}');
-  if (a < 0 || b < a) throw new Error('Kein JSON gefunden');
-  let j;
-  try { j = JSON.parse(text.slice(a, b + 1)); } catch { throw new Error('JSON ist fehlerhaft – nochmal komplett kopieren'); }
+const firstNum = (...vals) => { for (const v of vals) { const n = num(v); if (n != null) return n; } return null; };
+const asText = v => (Array.isArray(v) ? v.join('\n') : v == null ? '' : String(v)).trim();
+const noDash = v => { const s = asText(v); return /^[—–-]?$/.test(s) ? '' : s; };
+
+function parseMeal(m) {
+  if (!m || typeof m !== 'object') return null;
+  const items = (Array.isArray(m.items) ? m.items : [])
+    .map(i => ({ food: asText(i.food ?? i.name), grams: num(i.grams ?? i.g) }))
+    .filter(i => i.food);
+  const meal = { name: asText(m.name) || 'Mahlzeit', items };
+  for (const n of NUTRIENTS) {
+    const v = firstNum(m[n.k], n.k === 'salt' ? m.saltGrams : null, n.k === 'potassium' ? m.potassiumMg : null);
+    if (v != null) meal[n.k] = v;
+  }
+  return meal;
+}
+
+function parsePlan(input) {
+  let j = input;
+  if (typeof input === 'string') {
+    const a = input.indexOf('{'), b = input.lastIndexOf('}');
+    if (a < 0 || b < a) throw new Error('Kein JSON gefunden');
+    try { j = JSON.parse(input.slice(a, b + 1)); }
+    catch { throw new Error('JSON ist fehlerhaft – am besten die JSON-Datei wählen statt Text zu kopieren'); }
+  }
   const showDate = isIso(j.showDate) ? j.showDate : null;
   const days = Array.isArray(j.days) ? j.days : Array.isArray(j.tage) ? j.tage : null;
   if (!days?.length) throw new Error('Keine Tage ("days") gefunden');
   const plans = {};
   for (const d of days) {
     let date = d.date ?? d.datum;
-    const tm = d.tMinus ?? d.daysOut;
-    if (!isIso(date) && tm != null) {
-      const base = showDate || db.settings.showDate;
-      if (!base) throw new Error('Für "tMinus" braucht es ein "showDate"');
-      date = addDays(base, -Number(tm));
+    if (!isIso(date)) {
+      const out = firstNum(d.daysToShow, d.daysOut, d.tMinus);
+      if (out != null) {
+        const base = showDate || db.settings.showDate;
+        if (!base) throw new Error('Für "tMinus" braucht es ein "showDate"');
+        date = addDays(base, -Math.abs(out));
+      }
     }
     if (!isIso(date)) throw new Error(`Ungültiges Datum: ${date ?? '(fehlt)'}`);
+
     const p = {};
-    if (d.label) p.label = String(d.label).trim();
-    if (d.note) p.note = (Array.isArray(d.note) ? d.note.join('\n') : String(d.note)).trim();
-    for (const f of TARGET_FIELDS) { const v = num(d[f.k]); if (v != null) p[f.k] = v; }
-    if (p.water != null && p.water < 20) p.water = Math.round(p.water * 1000); // Liter → ml
-    if (p.salt != null && p.salt > 100) p.salt = p.salt / 1000; // mg → g
+    const label = asText(d.label) || asText(d.phase);
+    if (label) p.label = label;
+    const note = asText(d.note);
+    if (note) p.note = note;
+
+    const vals = {
+      kcal: firstNum(d.kcal, d.calories),
+      protein: firstNum(d.protein),
+      carbs: firstNum(d.carbs),
+      fat: firstNum(d.fat),
+      fiber: firstNum(d.fiber),
+      water: firstNum(d.water, d.waterMl),
+      salt: firstNum(d.salt, d.saltGrams, d.saltG),
+      potassium: firstNum(d.potassium, d.potassiumMg),
+      steps: firstNum(d.steps),
+      sleep: firstNum(d.sleep, d.sleepHours),
+    };
+    const liters = firstNum(d.waterLiters, d.waterL);
+    if (vals.water == null && liters != null) vals.water = liters * 1000;
+    if (vals.water != null && vals.water < 20) vals.water *= 1000; // Liter → ml
+    if (vals.salt != null && vals.salt > 100) vals.salt /= 1000;  // mg → g
+    for (const [k, v] of Object.entries(vals)) if (v != null) p[k] = k === 'water' ? Math.round(v) : v;
+
+    const training = noDash(d.training);
+    if (training) p.training = training;
+    const cardio = noDash(d.cardio);
+    if (cardio) p.cardio = cardio;
+    const posing = firstNum(d.posingMinutes, d.posing);
+    if (posing) p.posing = posing;
+    const saltAdded = firstNum(d.saltAddedGrams, d.saltAdded);
+    if (saltAdded != null) p.saltAdded = saltAdded;
+    if (asText(d.sleepWindow)) p.sleepWindow = asText(d.sleepWindow);
+    const rules = (Array.isArray(d.adjustmentRules) ? d.adjustmentRules : Array.isArray(d.rules) ? d.rules : [])
+      .map(asText).filter(Boolean);
+    if (rules.length) p.rules = rules;
+
+    const meals = [...(Array.isArray(d.meals) ? d.meals : []), d.preWorkoutMeal].map(parseMeal).filter(Boolean);
+    if (meals.length) p.meals = meals;
+
     plans[date] = p;
   }
   const dates = Object.keys(plans).sort();
   return { plans, dates, showDate, prepStart: isIso(j.prepStart) ? j.prepStart : dates[0] };
 }
 
-function planImportModal(text = '', msg = '') {
+function importPlan(input, raw = '') {
+  let r;
+  try { r = parsePlan(input); } catch (err) { planImportModal(raw, '⚠️ ' + esc(err.message)); return; }
+  const existing = r.dates.filter(x => db.plans[x]).length;
+  const meals = r.dates.reduce((a, x) => a + (r.plans[x].meals?.length || 0), 0);
+  if (!confirm(`${r.dates.length} Tage importieren (${dateLabel(r.dates[0])} – ${dateLabel(r.dates.at(-1))})?`
+    + (meals ? `\nMit ${meals} geplanten Mahlzeiten.` : '')
+    + (existing ? `\n${existing} vorhandene Tagespläne werden überschrieben.` : ''))) return;
+  Object.assign(db.plans, r.plans);
+  if (r.showDate) db.settings.showDate = r.showDate;
+  if (r.prepStart) db.settings.prepStart = r.prepStart;
+  save(); closeModal(); render();
+  toast(`${r.dates.length} Tage importiert`);
+}
+
+function planImportModal(raw = '', msg = '') {
   openModal(`
     <h3>Plan von KI importieren</h3>
-    <div class="note ${msg ? '' : 'good'}">${msg || '1. „Vorlage kopieren“ und an die KI schicken, deine Daten ausfüllen.<br>2. Antwort der KI komplett kopieren.<br>3. Hier einfügen und importieren.'}</div>
-    <button type="button" class="btn block" style="margin:0 0 10px" data-act="copyPlanPrompt">Vorlage für die KI kopieren</button>
-    <textarea class="full" id="planJson" placeholder="Antwort der KI hier einfügen…" style="min-height:180px">${esc(text)}</textarea>
+    <div class="note ${msg ? '' : 'good'}">${msg || '1. „Vorlage kopieren“ und an die KI schicken, deine Daten ausfüllen.<br>2. Die JSON-Datei der KI wählen <b>oder</b> das JSON kopieren und unten einfügen.<br>3. Importieren.'}</div>
+    <div class="btnrow" style="margin-bottom:10px">
+      <button type="button" data-act="copyPlanPrompt">Vorlage kopieren</button>
+      <label class="btn" style="display:flex;align-items:center;justify-content:center;position:relative">JSON-Datei wählen
+        <input type="file" accept=".json,application/json,text/plain" id="planFile" style="position:absolute;inset:0;opacity:0"></label>
+    </div>
+    <textarea class="full" id="planJson" placeholder="…oder JSON hier einfügen" style="min-height:160px">${esc(raw)}</textarea>
     <div class="btnrow" style="margin-top:12px">
       <button type="button" data-act="closeModal">Abbrechen</button>
       <button type="button" class="primary" data-act="doPlanImport">Importieren</button>
     </div>`);
+}
+
+// Uhrzeit vorne im Mahlzeit-Namen ("06:45 Frühstück …")
+const mealTime = name => (String(name).match(/^(\d{1,2}):(\d{2})/) || []).slice(1).map(x => x.padStart(2, '0')).join(':') || null;
+
+function planCardHTML() {
+  const p = db.plans[ui.date];
+  if (!p) return '';
+  const rows = [
+    ['Training', p.training],
+    ['Cardio', p.cardio],
+    ['Posing', p.posing ? `${fmt(p.posing)} min` : ''],
+    ['Schlaf', p.sleepWindow],
+  ].filter(([, v]) => v);
+  if (!rows.length && !p.note && !p.rules?.length) return '';
+  return `<section class="card">
+    <h2>Plan für heute ${p.label ? `<span class="h-right">${esc(p.label)}</span>` : ''}</h2>
+    ${rows.map(([k, v]) => `<div class="plan-row"><span>${k}</span><div>${esc(v)}</div></div>`).join('')}
+    ${p.note ? `<div class="plan-note">${esc(p.note).replace(/\n/g, '<br>')}</div>` : ''}
+    ${p.rules?.length ? `<details class="rules"><summary>Anpassungsregeln (${p.rules.length})</summary>
+      <ul>${p.rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}
+  </section>`;
+}
+
+function plannedMealsHTML() {
+  const meals = db.plans[ui.date]?.meals;
+  if (!meals?.length) return '';
+  const d = day();
+  const done = new Set(d.foods.filter(f => f.planRef != null).map(f => f.planRef));
+  return `<section class="card">
+    <h2>Geplant heute <span class="h-right">${done.size}/${meals.length} gegessen</span></h2>
+    <div class="list">${meals.map((m, i) => `
+      <div class="item planned ${done.has(i) ? 'done' : ''}">
+        <div class="main">
+          <div class="name wrap">${esc(m.name)}</div>
+          ${m.items.length ? `<div class="macros">${m.items.map(it => `${esc(it.food)}${it.grams != null ? ' ' + fmt(it.grams) + ' g' : ''}`).join(' · ')}</div>` : ''}
+          <div class="macros"><b>${fmt(m.kcal)} kcal</b> · EW ${fmt(m.protein)} · KH ${fmt(m.carbs)} · F ${fmt(m.fat)} · BS ${fmt(m.fiber)}</div>
+        </div>
+        <button class="eat ${done.has(i) ? 'on' : ''}" data-act="eatPlanned" data-i="${i}" aria-label="${done.has(i) ? 'Eintrag entfernen' : 'Als gegessen eintragen'}">✓</button>
+      </div>`).join('')}</div>
+    <p class="hint">Antippen trägt die Mahlzeit mit allen Nährwerten ein. Weicht die Menge ab, unten bei „Mahlzeiten“ antippen und anpassen.</p>
+  </section>`;
 }
 
 function planModal(date) {
@@ -877,6 +1012,9 @@ function planModal(date) {
       <div class="grid2">
         <label class="field wide"><span>Bezeichnung</span><input name="label" value="${esc(p.label || '')}" placeholder="z. B. Depletion, Carb-Load 1"></label>
         ${TARGET_FIELDS.map(f => `<label class="field"><span>${f.label}</span><input inputmode="decimal" name="${f.k}" value="${p[f.k] ?? ''}" placeholder="${fmt(t[f.k], 1)}"></label>`).join('')}
+        ${PLAN_EXTRAS.some(k => p[k] != null) ? `<div class="note field wide" style="margin:0">Aus dem Import: ${[
+          p.meals?.length ? `${p.meals.length} Mahlzeiten` : '', p.training ? 'Training' : '', p.cardio ? 'Cardio' : '',
+          p.posing ? 'Posing' : '', p.rules?.length ? `${p.rules.length} Anpassungsregeln` : ''].filter(Boolean).join(', ')} – bleibt beim Speichern erhalten.</div>` : ''}
         <label class="field wide"><span>Anweisungen (z. B. vom Coach)</span><textarea name="note" class="full" placeholder="Was ist heute wichtig?">${esc(p.note || '')}</textarea></label>
       </div>
       <div class="btnrow" style="margin-top:12px">
@@ -960,18 +1098,17 @@ const ACT = {
     try { await navigator.clipboard.writeText(PLAN_PROMPT); toast('Vorlage kopiert – jetzt in der KI einfügen'); }
     catch { planImportModal(PLAN_PROMPT, 'Kopieren hat nicht geklappt – Text markieren und kopieren.'); }
   },
-  doPlanImport() {
-    const text = $('#planJson').value;
-    let r;
-    try { r = parsePlan(text); } catch (err) { planImportModal(text, '⚠️ ' + esc(err.message)); return; }
-    const existing = r.dates.filter(x => db.plans[x]).length;
-    if (!confirm(`${r.dates.length} Tage importieren (${dateLabel(r.dates[0])} – ${dateLabel(r.dates.at(-1))})?`
-      + (existing ? `\n${existing} vorhandene Tagespläne werden überschrieben.` : ''))) return;
-    Object.assign(db.plans, r.plans);
-    if (r.showDate) db.settings.showDate = r.showDate;
-    if (r.prepStart) db.settings.prepStart = r.prepStart;
-    save(); closeModal(); render();
-    toast(`${r.dates.length} Tage importiert`);
+  doPlanImport() { const raw = $('#planJson').value; importPlan(raw, raw); },
+  eatPlanned(el) {
+    const i = +el.dataset.i, d = day();
+    const idx = d.foods.findIndex(f => f.planRef === i);
+    if (idx >= 0) { d.foods.splice(idx, 1); save(); render(); toast('Eintrag entfernt'); return; }
+    const m = db.plans[ui.date]?.meals?.[i];
+    if (!m) return;
+    const base = {};
+    for (const n of NUTRIENTS) if (m[n.k] != null) base[n.k] = m[n.k];
+    d.foods.push({ id: uid(), name: m.name.replace(/^\d{1,2}:\d{2}\s*/, ''), time: nowTime(), factor: 1, base, planRef: i });
+    save(); render(); toast('Eingetragen');
   },
   copyPrevPlan(el) {
     const prev = db.plans[addDays(el.dataset.date, -1)];
@@ -1103,6 +1240,13 @@ document.addEventListener('change', async e => {
     return;
   }
 
+  if (el.id === 'planFile' && el.files[0]) {
+    const raw = await el.files[0].text();
+    $('#planJson').value = raw.length > 200000 ? '' : raw;
+    importPlan(raw, raw.length > 200000 ? '' : raw);
+    return;
+  }
+
   if (el.id === 'importFile' && el.files[0]) {
     try {
       const parsed = JSON.parse(await el.files[0].text());
@@ -1152,7 +1296,9 @@ document.addEventListener('submit', e => {
     const date = fd.get('date');
     const p = { label: String(fd.get('label') || '').trim(), note: String(fd.get('note') || '').trim() };
     for (const f of TARGET_FIELDS) { const v = num(fd.get(f.k)); if (v != null) p[f.k] = v; }
-    const empty = !p.label && !p.note && TARGET_FIELDS.every(f => p[f.k] == null);
+    const old = db.plans[date] || {};
+    for (const k of PLAN_EXTRAS) if (old[k] != null) p[k] = old[k];
+    const empty = !p.label && !p.note && TARGET_FIELDS.every(f => p[f.k] == null) && PLAN_EXTRAS.every(k => p[k] == null);
     if (empty) delete db.plans[date]; else db.plans[date] = p;
     save(); closeModal(); render(); toast('Plan gespeichert');
   }

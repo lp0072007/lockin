@@ -303,3 +303,23 @@ td.over { color: var(--warn); }
   .ring { width: 108px; height: 108px; }
   .hero-big { font-size: 32px; }
 }
+
+/* ---------- Tagesplan (Home) ---------- */
+.plan-row { display: grid; grid-template-columns: 76px 1fr; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.plan-row span { color: var(--muted); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding-top: 2px; }
+.plan-note { margin-top: 10px; font-size: 14px; }
+.rules { margin-top: 10px; background: var(--card-2); border-radius: 12px; padding: 10px 12px; font-size: 14px; }
+.rules summary { cursor: pointer; font-weight: 700; }
+.rules ul { margin: 8px 0 0; padding-left: 18px; }
+.rules li { margin: 6px 0; }
+
+/* ---------- Geplante Mahlzeiten ---------- */
+.item .name.wrap { white-space: normal; }
+.item.planned { align-items: flex-start; }
+.item.planned .macros { margin-top: 2px; }
+.item.planned.done { opacity: .6; }
+.eat {
+  width: 44px; height: 44px; flex: 0 0 auto; border-radius: 50%; border: 2px solid var(--line);
+  background: transparent; color: var(--muted); font-size: 20px; font-weight: 800;
+}
+.eat.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
