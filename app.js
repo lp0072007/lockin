@@ -266,16 +266,29 @@ function toast(msg) {
 }
 
 // ---------- Rendering ----------
+// Unterseiten, die von Home aus geöffnet werden (unten bleibt "Home" aktiv)
+const SUBS = { essen: 'Essen', checkin: 'Check-in', verlauf: 'Verlauf' };
+
 function render() {
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
+  const navTab = SUBS[ui.tab] ? 'heute' : ui.tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === navTab));
   renderTop();
   view.innerHTML = VIEWS[ui.tab]();
   AFTER[ui.tab]?.();
 }
 
 function renderTop() {
-  if (!['heute', 'essen', 'checkin'].includes(ui.tab)) {
-    topEl.innerHTML = `<div class="top-title">${ui.tab === 'verlauf' ? 'Verlauf' : 'Plan & Einstellungen'}</div>`;
+  if (SUBS[ui.tab]) {
+    const sub = ui.tab === 'verlauf' ? 'Gewicht, Tage & Fotos'
+      : `${ui.date === todayISO() ? 'Heute · ' : ''}${dateLabel(ui.date)}`;
+    topEl.innerHTML = `<div class="subhead">
+      <button data-act="back" aria-label="Zurück zu Home">‹</button>
+      <div><b>${SUBS[ui.tab]}</b><small>${sub}</small></div>
+    </div>`;
+    return;
+  }
+  if (ui.tab === 'plan') {
+    topEl.innerHTML = `<div class="top-title">Einstellungen</div>`;
     return;
   }
   const sd = db.settings.showDate;
@@ -340,7 +353,7 @@ const LIVE = {
     const delta = d.weight != null && pw != null ? d.weight - pw : null;
     const supps = db.settings.supplements;
     const done = ratingsDone(ui.date);
-    const tile = (val, lbl, cls = '') => `<div class="tile ${cls}"><b>${val}</b><small>${lbl}</small></div>`;
+    const tile = (val, lbl, cls = '', to = '') => `<div class="tile ${cls}"${to ? ` data-act="open" data-to="${to}"` : ''}><b>${val}</b><small>${lbl}</small></div>`;
     return `
       <div class="hero">
         <svg class="ring" viewBox="0 0 128 128">
@@ -358,10 +371,10 @@ const LIVE = {
         </div>
       </div>
       <div class="tiles">
-        ${tile(d.weight != null ? fmt(d.weight, 1) : '–', delta != null ? `kg · ${delta > 0 ? '+' : ''}${fmt(delta, 1)}` : 'kg')}
+        ${tile(d.weight != null ? fmt(d.weight, 1) : '–', delta != null ? `kg · ${delta > 0 ? '+' : ''}${fmt(delta, 1)}` : 'kg', 'tap', 'verlauf')}
         ${tile(fmt(sum(d.workouts, w => w.min)), 'min Training')}
         ${tile(`${supps.filter(x => d.supps[x]).length}/${supps.length}`, 'Supps')}
-        ${tile(done ? '✓' : '–', 'Look', done ? 'done' : '')}
+        ${tile(done ? '✓' : '–', 'Look', done ? 'done tap' : 'tap', 'checkin')}
       </div>`;
   },
   macros: () => barsHTML(['protein', 'carbs', 'fat', 'fiber', 'potassium']),
@@ -390,16 +403,24 @@ function refreshLive() {
 const VIEWS = {
   heute() {
     const d = day();
-    const remind = ui.date === todayISO() && new Date().getHours() >= 18 && !ratingsDone(ui.date);
+    const done = ratingsDone(ui.date);
+    const glow = !done && ui.date <= todayISO();
     return `
-      ${remind ? `<section class="card banner" data-act="goCheckin">
-        <div><b>Look & Gefühl eintragen</b><small>Für heute fehlt noch dein Check-in.</small></div><span>›</span>
-      </section>` : ''}
+      <button class="checkin-btn ${done ? 'done' : ''} ${glow ? 'glow' : ''}" data-act="open" data-to="checkin">
+        <span class="ci-icon">${done ? '✓' : '!'}</span>
+        <span class="ci-txt"><b>${done ? 'Check-in erledigt' : 'Check-in machen'}</b>
+          <small>${done ? 'Look & Gefühl eingetragen – antippen zum Ändern' : 'Look & Gefühl für heute eintragen'}</small></span>
+        <span class="ci-chev">›</span>
+      </button>
+
       ${planCardHTML()}
 
       <section class="card" data-live="hero">${LIVE.hero()}</section>
 
-      <section class="card"><h2>Nährwerte</h2><div data-live="macros">${LIVE.macros()}</div></section>
+      <section class="card">
+        <h2>Nährwerte <button class="link" data-act="open" data-to="essen">Essen hinzufügen ›</button></h2>
+        <div data-live="macros">${LIVE.macros()}</div>
+      </section>
 
       <section class="card">
         <div data-live="water">${LIVE.water()}</div>
@@ -424,7 +445,7 @@ const VIEWS = {
       </section>
 
       <section class="card">
-        <h2>Abwaage</h2>
+        <h2>Abwaage <button class="link" data-act="open" data-to="verlauf">Verlauf ›</button></h2>
         <div class="seg" style="margin-bottom:10px">
           <button class="${d.fasted === true ? 'on' : ''}" data-act="fasted" data-v="1">Nüchtern</button>
           <button class="${d.fasted === false ? 'on warn' : ''}" data-act="fasted" data-v="0">Nicht nüchtern</button>
@@ -534,12 +555,6 @@ const VIEWS = {
       </section>
 
       <section class="card">
-        <h2>Progress-Fotos</h2>
-        <div class="photos" id="photoGrid"><div class="empty" style="grid-column:1/-1">Lade…</div></div>
-        <p class="hint">Immer gleiches Licht, gleiche Uhrzeit, gleiche Posen.</p>
-      </section>
-
-      <section class="card">
         <h2>Notizen</h2>
         <textarea class="full" data-day="notes" data-text placeholder="Wie fühlst du dich? Auffälligkeiten?">${esc(d.notes || '')}</textarea>
       </section>`;
@@ -553,7 +568,7 @@ const VIEWS = {
     return `
       <section class="card chart">
         <h2>Gewicht ${withWeight.length ? `<span class="h-right">${fmt(db.days[withWeight.at(-1)].weight, 1)} kg</span>` : ''}</h2>
-        ${withWeight.length >= 2 ? weightChart(withWeight) + (withWeight.some(x => db.days[x].fasted === false) ? `<p class="hint">Hohler Punkt = nicht nüchtern gewogen.</p>` : '') : `<div class="empty">Trag morgens dein Gewicht im Check-in ein, ab 2 Tagen gibt’s hier eine Kurve.</div>`}
+        ${withWeight.length >= 2 ? weightChart(withWeight) + (withWeight.some(x => db.days[x].fasted === false) ? `<p class="hint">Hohler Punkt = nicht nüchtern gewogen.</p>` : '') : `<div class="empty">Trag morgens dein Gewicht auf Home bei „Abwaage“ ein, ab 2 Tagen gibt’s hier eine Kurve.</div>`}
       </section>
 
       <section class="card">
@@ -578,6 +593,12 @@ const VIEWS = {
           }).join('')}</tbody></table></div>
           <p class="hint">Grün = im Ziel (±10 %), orange = drüber. * = nicht nüchtern gewogen. Tippen öffnet den Tag.</p>`
           : `<div class="empty">Noch keine Daten.</div>`}
+      </section>
+
+      <section class="card">
+        <h2>Progress-Fotos <span class="h-right">${ui.date === todayISO() ? 'Heute' : dateLabel(ui.date)}</span></h2>
+        <div class="photos" id="photoGrid"><div class="empty" style="grid-column:1/-1">Lade…</div></div>
+        <p class="hint">Immer gleiches Licht, gleiche Uhrzeit, gleiche Posen.</p>
       </section>
 
       <section class="card">
@@ -660,22 +681,16 @@ const VIEWS = {
 };
 
 const AFTER = {
-  async checkin() {
-    const grid = $('#photoGrid');
-    if (!grid) return;
-    let list = [];
-    try { list = await photos.byDate(ui.date); } catch { /* IndexedDB nicht verfügbar */ }
-    if (!$('#photoGrid') || ui.tab !== 'checkin') return;
-    grid.innerHTML = list.map(p => `<div class="photo"><img src="${p.data}" alt=""><button data-act="delPhoto" data-id="${p.id}" aria-label="Löschen">✕</button></div>`).join('')
-      + `<label class="photo-add">+<input type="file" accept="image/*" id="photoInput" multiple></label>`;
-  },
   async verlauf() {
-    const box = $('#compareBox');
     let list = [];
-    try { list = await photos.all(); } catch { /* egal */ }
-    if (!$('#compareBox')) return;
+    try { list = await photos.all(); } catch { /* IndexedDB nicht verfügbar */ }
+    const grid = $('#photoGrid'), box = $('#compareBox');
+    if (!grid || !box || ui.tab !== 'verlauf') return;
+    grid.innerHTML = list.filter(p => p.date === ui.date).sort((a, b) => a.created - b.created)
+      .map(p => `<div class="photo"><img src="${p.data}" alt=""><button data-act="delPhoto" data-id="${p.id}" aria-label="Löschen">✕</button></div>`).join('')
+      + `<label class="photo-add">+<input type="file" accept="image/*" id="photoInput" multiple></label>`;
     const dates = [...new Set(list.map(p => p.date))].sort();
-    if (!dates.length) { box.innerHTML = `<div class="empty">Noch keine Fotos. Im Check-in hinzufügen.</div>`; return; }
+    if (!dates.length) { box.innerHTML = `<div class="empty">Noch keine Fotos. Oben mit + hinzufügen.</div>`; return; }
     ui.cmpA = dates.includes(ui.cmpA) ? ui.cmpA : dates[0];
     ui.cmpB = dates.includes(ui.cmpB) ? ui.cmpB : dates.at(-1);
     const opts = sel => dates.map(x => `<option value="${x}" ${x === sel ? 'selected' : ''}>${dateLabel(x)}</option>`).join('');
@@ -1082,11 +1097,13 @@ const ACT = {
   urine(el) { const d = day(), v = +el.dataset.v; d.urine = d.urine === v ? null : v; save(); render(); },
   async delPhoto(el) {
     if (!confirm('Foto löschen?')) return;
-    await photos.del(el.dataset.id); AFTER.checkin();
+    await photos.del(el.dataset.id); AFTER.verlauf();
   },
 
-  goCheckin() { switchTab('checkin'); },
-  openDay(el) { ui.date = el.dataset.date; switchTab('heute'); },
+  open(el) { openSub(el.dataset.to); },
+  back() { goBack(); },
+  goCheckin() { openSub('checkin'); },
+  openDay(el) { ui.date = el.dataset.date; ui.homeScroll = 0; goBack(); },
 
   editPlan(el) { planModal(el.dataset.date); },
   async planImport() {
@@ -1182,6 +1199,29 @@ function switchTab(tab) {
   render();
 }
 
+function openSub(name) {
+  if (ui.tab === 'heute') ui.homeScroll = window.scrollY;
+  history.pushState({ sub: name }, '');
+  switchTab(name);
+}
+
+function showHome() {
+  ui.tab = 'heute';
+  try { sessionStorage.setItem('lockin.tab', 'heute'); } catch { /* egal */ }
+  render();
+  window.scrollTo(0, ui.homeScroll || 0);
+}
+
+function goBack() {
+  if (history.state?.sub) history.back(); else showHome();
+}
+
+// Zurück-Wischen / Zurück-Taste
+window.addEventListener('popstate', e => {
+  if (e.state?.sub) switchTab(e.state.sub);
+  else if (SUBS[ui.tab]) showHome();
+});
+
 $('#tabs').addEventListener('click', e => {
   const b = e.target.closest('button[data-tab]');
   if (b) switchTab(b.dataset.tab);
@@ -1236,7 +1276,7 @@ document.addEventListener('change', async e => {
       }
       toast('Foto gespeichert');
     } catch (err) { toast('Foto-Fehler: ' + err.message); }
-    AFTER.checkin();
+    AFTER.verlauf();
     return;
   }
 
