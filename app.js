@@ -265,6 +265,17 @@ function toast(msg) {
   toast._t = setTimeout(() => { t.hidden = true; }, 2200);
 }
 
+// Schrittzahl aus Text ("8432", "8.432", "8 432", "8432,0")
+function parseSteps(txt) {
+  const m = String(txt).match(/\d[\d.,'\s ]*/);
+  if (!m) return null;
+  let v = m[0].trim().replace(/['\s ]/g, '');
+  if (v.includes(',')) v = v.split(',')[0].replace(/\./g, '');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(v)) v = v.replace(/\./g, '');
+  const n = Math.round(parseFloat(v));
+  return Number.isFinite(n) && n >= 0 && n < 200000 ? n : null;
+}
+
 // ---------- Rendering ----------
 // Unterseiten, die von Home aus geöffnet werden (unten bleibt "Home" aktiv)
 const SUBS = { essen: 'Essen', checkin: 'Check-in', verlauf: 'Verlauf' };
@@ -462,6 +473,11 @@ const VIEWS = {
           <label class="field"><span>Schlaf (h)</span><input inputmode="decimal" data-day="sleep" value="${d.sleep != null ? fmt(d.sleep, 2) : ''}" placeholder="0"></label>
           <label class="field"><span>Qualität 1–10</span><input inputmode="numeric" data-day="sleepQ" value="${d.sleepQ ?? ''}" placeholder="–"></label>
         </div>
+        ${ui.date === todayISO() ? `<div class="btnrow" style="margin-top:10px">
+          ${ui.awaitSteps
+            ? `<button class="primary" data-act="pasteSteps">Schritte übernehmen</button><button class="ghost" data-act="healthSteps" aria-label="Kurzbefehl nochmal starten">↻</button>`
+            : `<button data-act="healthSteps">Schritte aus Apple Health</button>`}
+        </div>` : ''}
       </section>
 
       <section class="card">
@@ -1138,6 +1154,21 @@ const ACT = {
   saveSupps() {
     db.settings.supplements = $('#suppList').value.split('\n').map(s => s.trim()).filter(Boolean);
     save(); toast('Supplements gespeichert');
+  },
+
+  // Apple Health: Kurzbefehl "LockIn Schritte" kopiert die Schritte in die Zwischenablage
+  healthSteps() {
+    ui.awaitSteps = true;
+    location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('LockIn Schritte');
+    setTimeout(render, 300);
+  },
+  async pasteSteps() {
+    let txt = '';
+    try { txt = await navigator.clipboard.readText(); } catch { /* abgelehnt */ }
+    const steps = parseSteps(txt);
+    if (steps == null) { toast('Keine Schrittzahl in der Zwischenablage – Kurzbefehl nochmal starten'); return; }
+    day().steps = steps; ui.awaitSteps = false;
+    save(); render(); toast(`${fmt(steps)} Schritte übernommen`);
   },
 
   async enablePush() {
