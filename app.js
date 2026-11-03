@@ -245,12 +245,17 @@ function parseNutrition(text) {
 }
 
 // ---------- UI-State ----------
-const ui = { tab: 'heute', date: todayISO() };
-try { const t = sessionStorage.getItem('lockin.tab'); if (t) ui.tab = t; } catch { /* egal */ }
+// Hauptbereiche (unten) und Unterseiten
+const MAIN_TABS = ['gym', 'food', 'health'];
+const ui = { tab: 'food', home: 'food', date: todayISO(), scroll: {} };
+try {
+  const t = localStorage.getItem('lockin.lastTab');
+  if (MAIN_TABS.includes(t)) ui.tab = ui.home = t;
+} catch { /* egal */ }
 // Aus der Benachrichtigung geöffnet: ?tab=checkin
 {
   const t = new URLSearchParams(location.search).get('tab');
-  if (['heute', 'essen', 'checkin', 'verlauf', 'plan'].includes(t)) {
+  if (['gym', 'food', 'health', 'checkin', 'verlauf', 'plan'].includes(t)) {
     ui.tab = t;
     history.replaceState(null, '', location.pathname);
   }
@@ -277,11 +282,11 @@ function parseSteps(txt) {
 }
 
 // ---------- Rendering ----------
-// Unterseiten, die von Home aus geöffnet werden (unten bleibt "Home" aktiv)
-const SUBS = { essen: 'Essen', checkin: 'Check-in', verlauf: 'Verlauf' };
+// Unterseiten (unten bleibt der zuletzt genutzte Bereich markiert)
+const SUBS = { checkin: 'Check-in', verlauf: 'Verlauf', plan: 'Einstellungen' };
 
 function render() {
-  const navTab = SUBS[ui.tab] ? 'heute' : ui.tab;
+  const navTab = SUBS[ui.tab] ? ui.home : ui.tab;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === navTab));
   renderTop();
   view.innerHTML = VIEWS[ui.tab]();
@@ -291,15 +296,12 @@ function render() {
 function renderTop() {
   if (SUBS[ui.tab]) {
     const sub = ui.tab === 'verlauf' ? 'Gewicht, Tage & Fotos'
+      : ui.tab === 'plan' ? 'Prep-Plan, Ziele, Daten'
       : `${ui.date === todayISO() ? 'Heute · ' : ''}${dateLabel(ui.date)}`;
     topEl.innerHTML = `<div class="subhead">
-      <button data-act="back" aria-label="Zurück zu Home">‹</button>
+      <button data-act="back" aria-label="Zurück">‹</button>
       <div><b>${SUBS[ui.tab]}</b><small>${sub}</small></div>
     </div>`;
-    return;
-  }
-  if (ui.tab === 'plan') {
-    topEl.innerHTML = `<div class="top-title">Einstellungen</div>`;
     return;
   }
   const sd = db.settings.showDate;
@@ -317,6 +319,9 @@ function renderTop() {
         <input type="date" id="datepick" value="${ui.date}">
       </label>
       <button data-act="nextDay" aria-label="Nächster Tag">›</button>
+      <button class="gear" data-act="open" data-to="plan" aria-label="Einstellungen">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M2.5 12h3M18.5 12h3M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/></svg>
+      </button>
     </div>
     ${cd || label || !isToday ? `<div class="sub">
       ${cd ? `<span class="pill accent">${cd}</span>` : ''}
@@ -356,15 +361,10 @@ const ratingsDone = date => Object.keys(db.days[date]?.ratings || {}).length > 0
 // Bereiche der Home-Seite, die sich bei Eingaben live aktualisieren
 const LIVE = {
   hero() {
-    const d = day(), s = totals(ui.date), t = targetsFor(ui.date);
+    const s = totals(ui.date), t = targetsFor(ui.date);
     const pct = t.kcal ? s.kcal / t.kcal : 0;
     const R = 52, C = 2 * Math.PI * R;
     const rest = t.kcal - s.kcal;
-    const pw = prevWeight(ui.date);
-    const delta = d.weight != null && pw != null ? d.weight - pw : null;
-    const supps = db.settings.supplements;
-    const done = ratingsDone(ui.date);
-    const tile = (val, lbl, cls = '', to = '') => `<div class="tile ${cls}"${to ? ` data-act="open" data-to="${to}"` : ''}><b>${val}</b><small>${lbl}</small></div>`;
     return `
       <div class="hero">
         <svg class="ring" viewBox="0 0 128 128">
@@ -381,12 +381,7 @@ const LIVE = {
           <div class="hero-rest ${rest < 0 ? 'over' : ''}">${rest >= 0 ? `noch ${fmt(rest)} kcal` : `${fmt(-rest)} kcal drüber`}</div>
         </div>
       </div>
-      <div class="tiles">
-        ${tile(d.weight != null ? fmt(d.weight, 1) : '–', delta != null ? `kg · ${delta > 0 ? '+' : ''}${fmt(delta, 1)}` : 'kg', 'tap', 'verlauf')}
-        ${tile(fmt(sum(d.workouts, w => w.min)), 'min Training')}
-        ${tile(`${supps.filter(x => d.supps[x]).length}/${supps.length}`, 'Supps')}
-        ${tile(done ? '✓' : '–', 'Look', done ? 'done tap' : 'tap', 'checkin')}
-      </div>`;
+`;
   },
   macros: () => barsHTML(['protein', 'carbs', 'fat', 'fiber', 'potassium']),
   water() {
@@ -404,7 +399,8 @@ const LIVE = {
     const delta = d.weight - pw;
     return `${delta > 0 ? '+' : ''}${fmt(delta, 1)} kg zur letzten Abwaage (${fmt(pw, 1)} kg)`;
   },
-  activity: () => barsHTML(['steps', 'sleep']),
+  steps: () => barsHTML(['steps']).replace('class="bar"', 'class="bar big"'),
+  sleep: () => barsHTML(['sleep']).replace('class="bar"', 'class="bar big"'),
 };
 
 function refreshLive() {
@@ -412,25 +408,86 @@ function refreshLive() {
 }
 
 const VIEWS = {
-  heute() {
+  // ---------- Tab: Gym ----------
+  gym() {
     const d = day();
     const done = ratingsDone(ui.date);
-    const glow = !done && ui.date <= todayISO();
+    // Leuchten nur, wenn für den Tag ein Prep-Plan existiert
+    const glow = !done && ui.date <= todayISO() && !!db.plans[ui.date];
     return `
-      <button class="checkin-btn ${done ? 'done' : ''} ${glow ? 'glow' : ''}" data-act="open" data-to="checkin">
-        <span class="ci-icon">${done ? '✓' : '!'}</span>
-        <span class="ci-txt"><b>${done ? 'Check-in erledigt' : 'Check-in machen'}</b>
-          <small>${done ? 'Look & Gefühl eingetragen – antippen zum Ändern' : 'Look & Gefühl für heute eintragen'}</small></span>
-        <span class="ci-chev">›</span>
-      </button>
-
       ${planCardHTML()}
 
+      <section class="card">
+        <h2>Training <span class="h-right">${fmt(sum(d.workouts, w => w.min))} min</span></h2>
+        <div class="list">
+          ${d.workouts.map(w => `<div class="item">
+            <span class="time">${w.t}</span>
+            <div class="main"><div class="name">${esc(w.type)}</div><div class="macros">${fmt(w.min)} min${w.note ? ' · ' + esc(w.note) : ''}</div></div>
+            <button class="icon-btn" data-act="delWorkout" data-id="${w.id}" aria-label="Löschen">✕</button>
+          </div>`).join('')}
+        </div>
+        <div class="grid2" style="margin-top:${d.workouts.length ? 10 : 0}px">
+          <label class="field"><span>Art</span><select id="wType">${WORKOUT_TYPES.map(x => `<option>${x}</option>`).join('')}</select></label>
+          <label class="field"><span>Minuten</span><input id="wMin" inputmode="numeric" placeholder="60"></label>
+          <label class="field wide"><span>Notiz (optional)</span><input id="wNote" placeholder="z. B. Push, 30 min LISS"></label>
+        </div>
+        <button class="btn primary block" data-act="addWorkout">Einheit eintragen</button>
+      </section>
+
+      <section class="card">
+        <h2>Abwaage <button class="link" data-act="open" data-to="verlauf">Verlauf ›</button></h2>
+        <div class="seg" style="margin-bottom:10px">
+          <button class="${d.fasted === true ? 'on' : ''}" data-act="fasted" data-v="1">Nüchtern</button>
+          <button class="${d.fasted === false ? 'on warn' : ''}" data-act="fasted" data-v="0">Nicht nüchtern</button>
+        </div>
+        <label class="field"><span>Gewicht (kg)</span><input inputmode="decimal" data-day="weight" value="${d.weight != null ? fmt(d.weight, 2) : ''}" placeholder="0,0"></label>
+        <p class="hint" data-live="weight">${LIVE.weight()}</p>
+      </section>
+
+      <button class="checkin-btn ${done ? 'done' : ''} ${glow ? 'glow' : ''}" data-act="open" data-to="checkin">
+        <span class="ci-icon">${done ? '✓' : '+'}</span>
+        <span class="ci-txt"><b>${done ? 'Check-in erledigt' : 'Check-in'}</b>
+          <small>${done ? 'Look & Gefühl eingetragen – antippen zum Ändern' : 'Look & Gefühl, Verdauung, Notizen'}</small></span>
+        <span class="ci-chev">›</span>
+      </button>`;
+  },
+
+  // ---------- Tab: Essen & Wasser ----------
+  food() {
+    const d = day();
+    const foods = [...d.foods].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    const supps = db.settings.supplements;
+    return `
       <section class="card" data-live="hero">${LIVE.hero()}</section>
 
       <section class="card">
-        <h2>Nährwerte <button class="link" data-act="open" data-to="essen">Essen hinzufügen ›</button></h2>
+        <h2>Nährwerte</h2>
         <div data-live="macros">${LIVE.macros()}</div>
+      </section>
+
+      <section class="card">
+        <h2>Essen hinzufügen</h2>
+        <div class="btnrow">
+          <button class="primary" data-act="pasteImport">Einfügen</button>
+          <button data-act="recipes">Rezepte</button>
+          <button data-act="addFood">+ Manuell</button>
+        </div>
+        <p class="hint">Yazio/Google Lens: Nährwerte kopieren, dann hier auf „Einfügen“ tippen.</p>
+      </section>
+
+      ${plannedMealsHTML()}
+
+      <section class="card">
+        <h2>Mahlzeiten <span class="h-right">${foods.length}</span></h2>
+        ${foods.length ? `<div class="list">${foods.map(f => `
+          <div class="item tap" data-act="editFood" data-id="${f.id}">
+            <span class="time">${esc(f.time || '')}</span>
+            <div class="main">
+              <div class="name">${esc(f.name || 'Mahlzeit')}${f.factor && f.factor !== 1 ? ` <small style="color:var(--muted)">×${fmt(f.factor, 2)}</small>` : ''}</div>
+              <div class="macros">${fmt(foodVal(f, 'kcal'))} kcal · EW ${fmt(foodVal(f, 'protein'))} · KH ${fmt(foodVal(f, 'carbs'))} · F ${fmt(foodVal(f, 'fat'))} · BS ${fmt(foodVal(f, 'fiber'))} · Salz ${fmt(foodVal(f, 'salt'), 1)}</div>
+            </div>
+            <button class="icon-btn" data-act="delFood" data-id="${f.id}" aria-label="Löschen">✕</button>
+          </div>`).join('')}</div>` : `<div class="empty">Noch nichts eingetragen.</div>`}
       </section>
 
       <section class="card">
@@ -456,23 +513,21 @@ const VIEWS = {
       </section>
 
       <section class="card">
-        <h2>Abwaage <button class="link" data-act="open" data-to="verlauf">Verlauf ›</button></h2>
-        <div class="seg" style="margin-bottom:10px">
-          <button class="${d.fasted === true ? 'on' : ''}" data-act="fasted" data-v="1">Nüchtern</button>
-          <button class="${d.fasted === false ? 'on warn' : ''}" data-act="fasted" data-v="0">Nicht nüchtern</button>
-        </div>
-        <label class="field"><span>Gewicht (kg)</span><input inputmode="decimal" data-day="weight" value="${d.weight != null ? fmt(d.weight, 2) : ''}" placeholder="0,0"></label>
-        <p class="hint" data-live="weight">${LIVE.weight()}</p>
-      </section>
+        <h2>Supplements <span class="h-right">${supps.filter(x => d.supps[x]).length}/${supps.length}</span></h2>
+        ${supps.length ? `<div class="chips">${supps.map(x =>
+          `<button class="chip ${d.supps[x] ? 'on' : ''}" data-act="supp" data-name="${esc(x)}">${d.supps[x] ? '✓ ' : ''}${esc(x)}</button>`).join('')}</div>`
+          : `<div class="empty">Supplements unter ⚙️ Einstellungen anlegen.</div>`}
+      </section>`;
+  },
 
+  // ---------- Tab: Schlaf & Health ----------
+  health() {
+    const d = day();
+    return `
       <section class="card">
-        <h2>Aktivität & Schlaf</h2>
-        <div data-live="activity">${LIVE.activity()}</div>
-        <div class="grid3" style="margin-top:10px">
-          <label class="field"><span>Schritte</span><input inputmode="numeric" data-day="steps" value="${d.steps ?? ''}" placeholder="0"></label>
-          <label class="field"><span>Schlaf (h)</span><input inputmode="decimal" data-day="sleep" value="${d.sleep != null ? fmt(d.sleep, 2) : ''}" placeholder="0"></label>
-          <label class="field"><span>Qualität 1–10</span><input inputmode="numeric" data-day="sleepQ" value="${d.sleepQ ?? ''}" placeholder="–"></label>
-        </div>
+        <h2>Schritte</h2>
+        <div data-live="steps">${LIVE.steps()}</div>
+        <label class="field" style="margin-top:10px"><span>Schritte</span><input inputmode="numeric" data-day="steps" value="${d.steps ?? ''}" placeholder="0"></label>
         ${ui.date === todayISO() ? `<div class="btnrow" style="margin-top:10px">
           ${ui.awaitSteps
             ? `<button class="primary" data-act="pasteSteps">Schritte übernehmen</button><button class="ghost" data-act="healthSteps" aria-label="Kurzbefehl nochmal starten">↻</button>`
@@ -481,62 +536,12 @@ const VIEWS = {
       </section>
 
       <section class="card">
-        <h2>Training <span class="h-right">${fmt(sum(d.workouts, w => w.min))} min</span></h2>
-        <div class="list">
-          ${d.workouts.map(w => `<div class="item">
-            <span class="time">${w.t}</span>
-            <div class="main"><div class="name">${esc(w.type)}</div><div class="macros">${fmt(w.min)} min${w.note ? ' · ' + esc(w.note) : ''}</div></div>
-            <button class="icon-btn" data-act="delWorkout" data-id="${w.id}" aria-label="Löschen">✕</button>
-          </div>`).join('')}
+        <h2>Schlaf</h2>
+        <div data-live="sleep">${LIVE.sleep()}</div>
+        <div class="grid2" style="margin-top:10px">
+          <label class="field"><span>Schlaf (h)</span><input inputmode="decimal" data-day="sleep" value="${d.sleep != null ? fmt(d.sleep, 2) : ''}" placeholder="0"></label>
+          <label class="field"><span>Qualität 1–10</span><input inputmode="numeric" data-day="sleepQ" value="${d.sleepQ ?? ''}" placeholder="–"></label>
         </div>
-        <div class="grid2" style="margin-top:${d.workouts.length ? 10 : 0}px">
-          <label class="field"><span>Art</span><select id="wType">${WORKOUT_TYPES.map(x => `<option>${x}</option>`).join('')}</select></label>
-          <label class="field"><span>Minuten</span><input id="wMin" inputmode="numeric" placeholder="60"></label>
-          <label class="field wide"><span>Notiz (optional)</span><input id="wNote" placeholder="z. B. Push, 30 min LISS"></label>
-        </div>
-        <button class="btn primary block" data-act="addWorkout">Einheit eintragen</button>
-      </section>
-
-      <section class="card">
-        <h2>Supplements <span class="h-right">${db.settings.supplements.filter(x => d.supps[x]).length}/${db.settings.supplements.length}</span></h2>
-        ${db.settings.supplements.length ? `<div class="chips">${db.settings.supplements.map(x =>
-          `<button class="chip ${d.supps[x] ? 'on' : ''}" data-act="supp" data-name="${esc(x)}">${d.supps[x] ? '✓ ' : ''}${esc(x)}</button>`).join('')}</div>`
-          : `<div class="empty">Supplements unter „Plan“ anlegen.</div>`}
-      </section>`;
-  },
-
-  essen() {
-    const d = day(), s = totals(ui.date), t = targetsFor(ui.date);
-    const foods = [...d.foods].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-    const cell = (k, l) => `<div><b>${fmt(s[k])}</b><small>${l} / ${fmt(t[k])}</small></div>`;
-    return `
-      <section class="card">
-        <div class="summary">${cell('kcal', 'kcal')}${cell('protein', 'EW')}${cell('carbs', 'KH')}${cell('fat', 'Fett')}</div>
-        <p class="hint" style="text-align:center">Ballaststoffe ${fmt(s.fiber)} / ${fmt(t.fiber)} g · Salz ${fmt(s.salt, 1)} / ${fmt(t.salt, 1)} g</p>
-      </section>
-
-      <section class="card">
-        <div class="btnrow">
-          <button class="primary" data-act="pasteImport">Einfügen</button>
-          <button data-act="recipes">Rezepte</button>
-          <button data-act="addFood">+ Manuell</button>
-        </div>
-        <p class="hint">Yazio: Rezept öffnen → Teilen → Kopieren, dann hier auf „Einfügen“ tippen.</p>
-      </section>
-
-      ${plannedMealsHTML()}
-
-      <section class="card">
-        <h2>Mahlzeiten <span class="h-right">${foods.length}</span></h2>
-        ${foods.length ? `<div class="list">${foods.map(f => `
-          <div class="item tap" data-act="editFood" data-id="${f.id}">
-            <span class="time">${esc(f.time || '')}</span>
-            <div class="main">
-              <div class="name">${esc(f.name || 'Mahlzeit')}${f.factor && f.factor !== 1 ? ` <small style="color:var(--muted)">×${fmt(f.factor, 2)}</small>` : ''}</div>
-              <div class="macros">${fmt(foodVal(f, 'kcal'))} kcal · EW ${fmt(foodVal(f, 'protein'))} · KH ${fmt(foodVal(f, 'carbs'))} · F ${fmt(foodVal(f, 'fat'))} · BS ${fmt(foodVal(f, 'fiber'))} · Salz ${fmt(foodVal(f, 'salt'), 1)}</div>
-            </div>
-            <button class="icon-btn" data-act="delFood" data-id="${f.id}" aria-label="Löschen">✕</button>
-          </div>`).join('')}</div>` : `<div class="empty">Noch nichts eingetragen.</div>`}
       </section>`;
   },
 
@@ -1119,7 +1124,7 @@ const ACT = {
   open(el) { openSub(el.dataset.to); },
   back() { goBack(); },
   goCheckin() { openSub('checkin'); },
-  openDay(el) { ui.date = el.dataset.date; ui.homeScroll = 0; goBack(); },
+  openDay(el) { ui.date = el.dataset.date; ui.scroll[ui.home] = 0; goBack(); },
 
   editPlan(el) { planModal(el.dataset.date); },
   async planImport() {
@@ -1224,24 +1229,22 @@ const ACT = {
 
 // ---------- Events ----------
 function switchTab(tab) {
+  if (MAIN_TABS.includes(ui.tab)) ui.scroll[ui.tab] = window.scrollY;
   ui.tab = tab;
-  try { sessionStorage.setItem('lockin.tab', tab); } catch { /* egal */ }
-  window.scrollTo(0, 0);
+  if (MAIN_TABS.includes(tab)) {
+    ui.home = tab;
+    try { localStorage.setItem('lockin.lastTab', tab); } catch { /* egal */ }
+  }
   render();
+  window.scrollTo(0, MAIN_TABS.includes(tab) ? ui.scroll[tab] || 0 : 0);
 }
 
 function openSub(name) {
-  if (ui.tab === 'heute') ui.homeScroll = window.scrollY;
   history.pushState({ sub: name }, '');
   switchTab(name);
 }
 
-function showHome() {
-  ui.tab = 'heute';
-  try { sessionStorage.setItem('lockin.tab', 'heute'); } catch { /* egal */ }
-  render();
-  window.scrollTo(0, ui.homeScroll || 0);
-}
+function showHome() { switchTab(ui.home); }
 
 function goBack() {
   if (history.state?.sub) history.back(); else showHome();
@@ -1255,8 +1258,12 @@ window.addEventListener('popstate', e => {
 
 $('#tabs').addEventListener('click', e => {
   const b = e.target.closest('button[data-tab]');
-  if (b) switchTab(b.dataset.tab);
-});
+  if (!b) return;
+  // Nochmal auf den aktiven Bereich tippen = nach oben scrollen
+  if (b.dataset.tab === ui.tab) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  if (SUBS[ui.tab] && history.state?.sub) history.replaceState(null, '');
+  switchTab(b.dataset.tab);
+}); 
 
 document.addEventListener('click', e => {
   if (e.target === modal) { closeModal(); return; }
